@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.delivery.models import DeliverySlot
@@ -66,6 +66,9 @@ PRODUCTS = [
     P("dish-750ml", "Tsitsi Home", "Dishwashing liquid", "", 750, Unit.ML, 1, "household", TaxCode.STANDARD),
     P("tissue-9", "Tsitsi Home", "Toilet tissue", "2-ply", 1, Unit.EACH, 9, "household", TaxCode.STANDARD),
     P("washing-2kg", "Tsitsi Home", "Washing powder", "", 2000, Unit.G, 1, "household", TaxCode.STANDARD),
+    # Store-exclusive lines, so a realistic list can need two stores.
+    P("sorghum-1kg", "Highveld Mills", "Sorghum meal", "", 1000, Unit.G, 1, "staples", TaxCode.ZERO_RATED),
+    P("chakalaka-410g", "Sunbird", "Chakalaka relish", "mild", 410, Unit.G, 1, "tins", TaxCode.STANDARD),
 ]
 # fmt: on
 
@@ -98,13 +101,14 @@ MERCHANTS = [
         "maize-5kg": (6999, 20), "rice-2kg": (3999, 30), "sugar-2.5kg": (5299, 25),
         "oil-2l": (5999, 25), "beans-410g": (1599, 80), "pasta-500g": (1999, 50),
         "flour-2.5kg": (3599, 25), "tomato-400g": (1499, 60), "tissue-9": (8499, 20),
+        "sorghum-1kg": (2499, 30),
     }),
     M("umoya", "Umoya Foods (Fictional)", ("zone-a",), 20, 0, 5500, 45, {
         "milk-1l": (2099, 25), "milk-6x1l": (11499, 6), "milk-lf-1l": (2099, 15),
         "rice-2kg": (4699, 15), "sugar-2.5kg": (5899, 15), "oil-2l": (6799, 15),
         "tea-100": (6299, 10), "coffee-250g": (9499, 10), "beans-410g": (1899, 30),
         "pasta-500g": (2399, 25), "peanut-400g": (4299, 15), "dish-750ml": (3499, 20),
-        "washing-2kg": (10499, 8),
+        "washing-2kg": (10499, 8), "chakalaka-410g": (1899, 40),
     }),
     M("jacaranda", "Jacaranda Pantry (Fictional)", ("zone-b",), 50, 10000, 3500, 150, {
         "milk-1l": (1949, 20), "maize-2.5kg": (3899, 20), "rice-2kg": (4199, 20),
@@ -116,102 +120,145 @@ MERCHANTS = [
 # fmt: on
 
 
-def seed(session: Session, *, now: datetime) -> dict[str, uuid.UUID]:
-    """Create the synthetic catalogue as of `now`. Re-running is a no-op."""
-    ids: dict[str, uuid.UUID] = {}
-    if session.get(Merchant, sid("merchant", "kestrel")) is not None:
-        for p in PRODUCTS:
-            ids[f"product:{p.code}"] = sid("product", p.code)
-        for m in MERCHANTS:
-            ids[f"merchant:{m.code}"] = sid("merchant", m.code)
-            ids[f"location:{m.code}"] = sid("location", m.code)
-        return ids
+def _ensure(session: Session, model, key, **values):
+    """Insert the row if its primary key is missing. Returns the (existing or new) row."""
+    row = session.get(model, key)
+    if row is None:
+        row = model(**values)
+        session.add(row)
+        session.flush()
+    return row
 
+
+def seed(session: Session, *, now: datetime) -> dict[str, uuid.UUID]:
+    """Ensure the synthetic catalogue exists and has fresh availability as of `now`.
+
+    Idempotent per entity: missing products, merchants and mappings are added; offer
+    observations and delivery slots are refreshed when stale, so re-running on another day
+    gives current availability. Immutable history (old offers, slots) is never modified.
+    """
+    ids: dict[str, uuid.UUID] = {}
     for i, p in enumerate(PRODUCTS):
         pid = sid("product", p.code)
         ids[f"product:{p.code}"] = pid
-        session.add(
-            Product(
-                id=pid,
-                gtin=gtin13(f"2000000{i + 1:05d}"),
-                brand=p.brand,
-                name=p.name,
-                variant=p.variant,
-                unit_measure=p.measure,
-                unit=p.unit,
-                pack_count=p.pack,
-                category=p.category,
-            )
+        _ensure(
+            session,
+            Product,
+            pid,
+            id=pid,
+            gtin=gtin13(f"2000000{i + 1:05d}"),
+            brand=p.brand,
+            name=p.name,
+            variant=p.variant,
+            unit_measure=p.measure,
+            unit=p.unit,
+            pack_count=p.pack,
+            category=p.category,
         )
-    session.flush()
 
     for m in MERCHANTS:
         mid, lid = sid("merchant", m.code), sid("location", m.code)
         ids[f"merchant:{m.code}"], ids[f"location:{m.code}"] = mid, lid
-        session.add(
-            Merchant(
-                id=mid,
-                code=m.code,
-                display_name=m.name,
-                legal_name=f"{m.name} (synthetic entity)",
-                state=MerchantState.PAYMENT_ENABLED,
-                payout_destination_version=f"sim-payout-{m.code}-v1",
-            )
+        _ensure(
+            session,
+            Merchant,
+            mid,
+            id=mid,
+            code=m.code,
+            display_name=m.name,
+            legal_name=f"{m.name} (synthetic entity)",
+            state=MerchantState.PAYMENT_ENABLED,
+            payout_destination_version=f"sim-payout-{m.code}-v1",
         )
-        session.flush()
-        session.add(
-            MerchantLocation(
-                id=lid,
-                merchant_id=mid,
-                code=m.code,
-                name=f"{m.name} - Central",
-                service_zones=list(m.zones),
-                minimum_order_minor=m.minimum_order_minor,
-                pick_minutes=m.pick_minutes,
-            )
+        _ensure(
+            session,
+            MerchantLocation,
+            lid,
+            id=lid,
+            merchant_id=mid,
+            code=m.code,
+            name=f"{m.name} - Central",
+            service_zones=list(m.zones),
+            minimum_order_minor=m.minimum_order_minor,
+            pick_minutes=m.pick_minutes,
         )
-        session.flush()
-        session.add(
-            MerchantCapability(
-                location_id=lid,
-                version=1,
-                can_reserve=True,
-                can_commit=True,
-                can_cancel=True,
-                can_lookup_by_reference=True,
-                reservation_ttl_seconds=1800,
-                evidence="synthetic merchant simulator; not evidence of any real merchant capability",
+        if (
+            session.scalars(
+                select(MerchantCapability.id).where(MerchantCapability.location_id == lid)
+            ).first()
+            is None
+        ):
+            session.add(
+                MerchantCapability(
+                    location_id=lid,
+                    version=1,
+                    can_reserve=True,
+                    can_commit=True,
+                    can_cancel=True,
+                    can_lookup_by_reference=True,
+                    reservation_ttl_seconds=1800,
+                    evidence="synthetic merchant simulator; not evidence of any real merchant capability",
+                )
             )
-        )
         for code, (price, stock) in m.prices.items():
             product = next(p for p in PRODUCTS if p.code == code)
             sku = f"{m.code.upper()}-{code.upper()}"
-            session.add(
-                ProductMapping(
-                    merchant_id=mid,
-                    merchant_sku=sku,
-                    product_id=sid("product", code),
-                    match_level=MatchLevel.GTIN_VERIFIED,
-                    evidence="synthetic GTIN match",
+            if (
+                session.scalars(
+                    select(ProductMapping.id).where(
+                        ProductMapping.merchant_id == mid,
+                        ProductMapping.merchant_sku == sku,
+                        ProductMapping.active,
+                    )
+                ).first()
+                is None
+            ):
+                session.add(
+                    ProductMapping(
+                        merchant_id=mid,
+                        merchant_sku=sku,
+                        product_id=sid("product", code),
+                        match_level=MatchLevel.GTIN_VERIFIED,
+                        evidence="synthetic GTIN match",
+                    )
+                )
+            latest = session.scalars(
+                select(OfferVersion)
+                .where(
+                    OfferVersion.location_id == lid, OfferVersion.product_id == sid("product", code)
+                )
+                .order_by(OfferVersion.observed_at.desc())
+                .limit(1)
+            ).first()
+            if latest is None or latest.valid_until < now + timedelta(hours=12):
+                session.add(
+                    OfferVersion(
+                        location_id=lid,
+                        product_id=sid("product", code),
+                        merchant_sku=sku,
+                        price_minor=price,
+                        tax_code=product.tax,
+                        stock_quantity=stock,
+                        stock_confidence=StockConfidence.OBSERVED,
+                        observed_at=now - timedelta(minutes=5),
+                        valid_until=now + timedelta(days=2),
+                        description=f"{product.brand} {product.name} (synthetic listing)",
+                    )
+                )
+        for zone in m.zones:
+            spare = session.scalar(
+                select(
+                    func.coalesce(func.sum(DeliverySlot.capacity - DeliverySlot.booked), 0)
+                ).where(
+                    DeliverySlot.location_id == lid,
+                    DeliverySlot.zone == zone,
+                    DeliverySlot.starts_at > now + timedelta(minutes=m.pick_minutes),
                 )
             )
-            session.add(
-                OfferVersion(
-                    location_id=lid,
-                    product_id=sid("product", code),
-                    merchant_sku=sku,
-                    price_minor=price,
-                    tax_code=product.tax,
-                    stock_quantity=stock,
-                    stock_confidence=StockConfidence.OBSERVED,
-                    observed_at=now - timedelta(minutes=5),
-                    valid_until=now + timedelta(days=2),
-                    description=f"{product.brand} {product.name} (synthetic listing)",
-                )
-            )
-        for hour in range(12):
-            start = now + timedelta(minutes=m.first_slot_minutes + 60 * hour)
-            for zone in m.zones:
+            if spare >= 10:  # keep simulated courier capacity for the next 12 hours, per zone
+                continue
+            for hour in range(12):
+                start = now + timedelta(minutes=m.first_slot_minutes + 60 * hour)
                 session.add(
                     DeliverySlot(
                         location_id=lid,
@@ -225,41 +272,45 @@ def seed(session: Session, *, now: datetime) -> dict[str, uuid.UUID]:
                 )
     session.flush()
 
-    # Structured promotions (D-S03.3).
+    # Structured promotions (D-S03.3), renewed when none is active.
     window = {"valid_from": now - timedelta(days=1), "valid_until": now + timedelta(days=7)}
-    session.add_all(
-        [
-            Promotion(
-                location_id=ids["location:kestrel"],
-                kind=PromotionKind.DELIVERY_THRESHOLD,
-                min_spend_minor=80000,
-                **window,
-            ),
-            Promotion(
-                location_id=ids["location:baobab"],
-                kind=PromotionKind.MULTIBUY,
-                product_ids=[ids["product:beans-410g"]],
-                min_quantity=3,
-                bundle_price_minor=4200,
-                **window,
-            ),
-            Promotion(
-                location_id=ids["location:umoya"],
-                kind=PromotionKind.PERCENT_LINE,
-                product_ids=[ids["product:coffee-250g"]],
-                percent_bp=1000,
-                **window,
-            ),
-            Promotion(
-                location_id=ids["location:jacaranda"],
-                kind=PromotionKind.LOYALTY_PRICE,
-                product_ids=[ids["product:oil-2l"]],
-                price_minor=4999,
-                requires_loyalty_programme="jacaranda-rewards-fictional",
-                **window,
-            ),
-        ]
-    )
+    promos = [
+        dict(
+            location_id=ids["location:kestrel"],
+            kind=PromotionKind.DELIVERY_THRESHOLD,
+            min_spend_minor=80000,
+        ),
+        dict(
+            location_id=ids["location:baobab"],
+            kind=PromotionKind.MULTIBUY,
+            product_ids=[ids["product:beans-410g"]],
+            min_quantity=3,
+            bundle_price_minor=4200,
+        ),
+        dict(
+            location_id=ids["location:umoya"],
+            kind=PromotionKind.PERCENT_LINE,
+            product_ids=[ids["product:coffee-250g"]],
+            percent_bp=1000,
+        ),
+        dict(
+            location_id=ids["location:jacaranda"],
+            kind=PromotionKind.LOYALTY_PRICE,
+            product_ids=[ids["product:oil-2l"]],
+            price_minor=4999,
+            requires_loyalty_programme="jacaranda-rewards-fictional",
+        ),
+    ]
+    for promo in promos:
+        active = session.scalars(
+            select(Promotion.id).where(
+                Promotion.location_id == promo["location_id"],
+                Promotion.kind == promo["kind"],
+                Promotion.valid_until > now + timedelta(days=1),
+            )
+        ).first()
+        if active is None:
+            session.add(Promotion(**promo, **window))
     session.flush()
     return ids
 

@@ -12,6 +12,7 @@ from app.errors import ErrorCode, TrollieError
 from app.merchants.models import Reservation, ReservationState
 from app.quotes.models import FulfilmentMode, Quote, QuoteKind, QuoteState
 from app.quotes.service import EXECUTION_SAFETY_MARGIN, recompute_hash
+from app.simulators.authenticator import SoftAuthenticator
 from app.simulators.faults import inject
 from app.simulators.models import SimMerchantReservation
 from tests.flows import (
@@ -24,7 +25,6 @@ from tests.flows import (
     register_passkey,
     shopping_list,
 )
-from tests.soft_authenticator import SoftAuthenticator
 
 BASKET = [("milk-1l", {"packs": 2}), ("beans-410g", {"packs": 3}), ("tea-100", {})]
 

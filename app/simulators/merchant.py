@@ -212,3 +212,24 @@ class SimulatedMerchant:
             if order is not None and order.state == "accepted":
                 order.state = "ready"
             return self._order_obs(order, client_ref)
+
+
+def restock(session: Session) -> int:
+    """Dev harness: refill simulated shelves to the latest observed stock, keeping holds.
+    Returns the number of stock rows topped up."""
+    topped = 0
+    for row in session.scalars(select(SimMerchantStock).with_for_update()):
+        observed = session.scalars(
+            select(OfferVersion.stock_quantity)
+            .where(
+                OfferVersion.location_id == row.location_id,
+                OfferVersion.product_id == row.product_id,
+            )
+            .order_by(OfferVersion.observed_at.desc())
+            .limit(1)
+        ).first()
+        target = row.held + (UNLIMITED if observed is None else observed)
+        if row.on_hand < target:
+            row.on_hand = target
+            topped += 1
+    return topped

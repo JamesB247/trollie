@@ -1,4 +1,4 @@
-"""A software WebAuthn authenticator (ES256, 'none' attestation) for automated tests.
+"""A software WebAuthn authenticator (ES256, "none" attestation) for tests and the demo.
 
 It produces real registration and assertion structures that the server verifies with
 py_webauthn. It proves protocol behaviour only; it is not evidence that a person

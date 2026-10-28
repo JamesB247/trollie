@@ -57,9 +57,15 @@ class FaultIn(Strict):
 
 @router.post("/seed")
 def dev_seed(c: AppContext = Depends(dev_only)):
+    from app.simulators.merchant import restock
+
     with c.rt.sessions() as s, s.begin():
         ids = seed(s, now=c.rt.clock.now())
-    return {"merchants": sorted(k for k in ids if k.startswith("merchant:"))}
+        restocked = restock(s)
+    return {
+        "merchants": sorted(k for k in ids if k.startswith("merchant:")),
+        "restocked_rows": restocked,
+    }
 
 
 @router.post("/accounts", status_code=201)
@@ -115,6 +121,27 @@ def fault(body: FaultIn, c: AppContext = Depends(dev_only)):
             times=body.times,
         )
     return {"status": "armed"}
+
+
+@router.delete("/sim/faults")
+def clear_faults(c: AppContext = Depends(dev_only)):
+    from sqlalchemy import delete
+
+    from app.simulators.models import SimFault
+
+    with c.rt.sessions() as s, s.begin():
+        s.execute(delete(SimFault))
+    return {"status": "cleared"}
+
+
+class WorkerIn(Strict):
+    paused: bool
+
+
+@router.post("/worker")
+def worker(body: WorkerIn, c: AppContext = Depends(dev_only)):
+    c.rt.worker_paused = body.paused
+    return {"paused": c.rt.worker_paused}
 
 
 @router.post("/pump")

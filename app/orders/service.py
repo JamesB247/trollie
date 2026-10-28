@@ -16,7 +16,7 @@ supplied within the approved conditions.
 import uuid
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -322,7 +322,26 @@ def request_cancellation(rt: Runtime, *, account_id: uuid.UUID, order_id: uuid.U
 # --- The driver ----------------------------------------------------------------------
 
 
+def _lock_key(order_id: uuid.UUID) -> int:
+    """Signed 64-bit key for a Postgres advisory lock derived from the order id."""
+    return int.from_bytes(order_id.bytes[:8], "big", signed=True)
+
+
 def advance(rt: Runtime, order_id: uuid.UUID, *, max_steps: int = 20) -> None:
+    """Drive one order forward. Only one worker advances a given order at a time: steps are
+    idempotent, but two interleaved steps on the same order could act on stale state."""
+    with rt.sessions() as lock:
+        key = _lock_key(order_id)
+        if not lock.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": key}).scalar():
+            return  # another worker holds it and will observe any new state on its next step
+        try:
+            _advance_steps(rt, order_id, max_steps)
+        finally:
+            lock.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": key})
+            lock.commit()
+
+
+def _advance_steps(rt: Runtime, order_id: uuid.UUID, max_steps: int) -> None:
     for _ in range(max_steps):
         with rt.sessions() as s:
             order = s.get(Order, order_id)

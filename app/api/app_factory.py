@@ -54,6 +54,8 @@ def build_runtime(settings: Settings, engine) -> Runtime:
 
 def _worker(rt: Runtime, stop: threading.Event) -> None:
     while not stop.wait(1.0):
+        if rt.worker_paused:
+            continue
         try:
             pump(rt, rt.payments)
         except Exception:  # noqa: BLE001 - keep the dev worker alive

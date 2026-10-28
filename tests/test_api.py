@@ -16,8 +16,8 @@ from app.durable.inbox import sign
 from app.offers.models import OfferVersion
 from app.products.models import Product
 from app.quotes.models import Quote
+from app.simulators.authenticator import SoftAuthenticator
 from tests.conftest import T0
-from tests.soft_authenticator import SoftAuthenticator
 
 
 @pytest.fixture

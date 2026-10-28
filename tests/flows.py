@@ -19,7 +19,7 @@ from app.clock import FixedClock
 from app.quotes.models import FulfilmentMode, Quote
 from app.quotes.optimiser import Candidate, Quantity, Rule, Strategy
 from app.quotes.service import add_item, create_session, prepare_firm_quote, request_estimates
-from tests.soft_authenticator import SoftAuthenticator
+from app.simulators.authenticator import SoftAuthenticator
 
 CFG = WebAuthnConfig(rp_id="localhost", origin="http://localhost:8000")
 CIPHER = AddressCipher.ephemeral()

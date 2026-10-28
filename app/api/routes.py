@@ -75,6 +75,7 @@ def _quote_view(quote) -> dict[str, Any]:
         "legs": [
             {
                 "leg_id": leg["leg_id"],
+                "location_id": leg["location_id"],
                 "seller": leg["seller"]["legal_name"],
                 "display_name": leg["seller"]["display_name"],
                 "goods_minor": leg["goods_minor"],

@@ -426,3 +426,20 @@ def test_reservations_released_after_cancellation(rt, db, split_world):
     pay(rt, p.checkout_ref, approve=False)
     for leg in legs(db, p.order_id).values():
         assert db.get(Reservation, leg.reservation_id).state == ReservationState.RELEASED
+
+
+def test_only_one_worker_advances_an_order_at_a_time(rt, db, split_world):
+    """While another worker holds the order's lock, advance() is a no-op; once released, the
+    order proceeds. Prevents interleaved steps acting on stale state."""
+    from app.orders.service import _lock_key, advance
+
+    p = purchase(rt, db, split_world, funding=CARD)
+    rt.payments.customer_completes(p.checkout_ref)
+    with rt.sessions() as holder:
+        holder.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _lock_key(p.order_id)})
+        pump(rt, rt.payments)  # webhook processed, but the order cannot be advanced
+        assert order(db, p.order_id).state == "PAYMENT_PENDING"
+        holder.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _lock_key(p.order_id)})
+        holder.commit()
+    advance(rt, p.order_id)
+    assert order(db, p.order_id).state == "FULFILLING"
