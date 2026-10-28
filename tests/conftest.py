@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 import pytest
 from alembic import command
 from alembic.config import Config
+from hypothesis import settings as hypothesis_settings
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session
 
@@ -67,3 +68,9 @@ def catalogue(engine: Engine) -> dict[str, uuid.UUID]:
     """The synthetic seed, created once at T0 for the whole test session."""
     with Session(engine) as session, session.begin():
         return seed(session, now=T0)
+
+
+# HYPOTHESIS_PROFILE=thorough runs the property tests far longer (used before releases).
+hypothesis_settings.register_profile("default", max_examples=300)
+hypothesis_settings.register_profile("thorough", max_examples=5000)
+hypothesis_settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
