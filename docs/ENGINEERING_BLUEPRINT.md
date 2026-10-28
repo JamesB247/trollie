@@ -6,6 +6,8 @@
 **Status:** Suitable for internal product/engineering planning and partner diligence. Not a production launch approval, legal opinion, provider certification, or evidence of signed partnerships.  
 **Product retained:** An end-to-end, multi-retailer purchasing and delivery service, not a price-comparison-only product.
 
+> **Amendments:** clauses superseded after 2026-10-28 are listed in `DECISIONS.md`. Original text is retained and annotated where amended.
+
 ## Executive decision
 
 **Proceed with a bounded end-to-end pilot build. Do not add another general-purpose vision layer.** The PRD now describes the right product: one shopping request, a complete purchasable basket, explicit customer approval, retailer orders, coordinated delivery, and accountable after-sales support.
@@ -207,7 +209,7 @@ The source places `>=95% of accepted orders delivered as approved` inside its st
 | Delivery | Separate legs by default; consolidated pickup only after a contracted/tested capability gate | Preserves both outcomes without pretending consolidation is available |
 | Payment | One approved provider product and initial rail; topology demonstrated before live money | Makes the provider gate executable |
 | One-payment promise | Retain as target; do not advertise it until the exact aggregate flow is proven | No silent downgrade to multiple charges |
-| Wallet | None | Existing requirement |
+| Wallet | None *(superseded 2026-10-28: synthetic wallet in scope; live stored value still gated — see `DECISIONS.md` D-W01–D-W03)* | Existing requirement |
 | Agent | Suggests structured shopping intent, requests quotes and explains authoritative results | Existing authority boundary |
 | Models | Candidate model benchmarked; no hard-coded capability assumptions based on brand | Existing requirement |
 | App/service structure | One codebase with bounded modules and separately permissioned execution roles | Resolves logical module vs deployment confusion |
