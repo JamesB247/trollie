@@ -93,3 +93,58 @@ def clock() -> "FixedClock":
 @pytest.fixture
 def merchant(engine: Engine, clock) -> "SimulatedMerchant":
     return SimulatedMerchant(engine, clock)
+
+
+WEBHOOK_SECRET = b"test-simpay-webhook-secret"
+
+
+@pytest.fixture(scope="session")
+def split_world(engine: Engine) -> dict[str, uuid.UUID]:
+    from tests.order_support import seed_split_world
+
+    with Session(engine) as session, session.begin():
+        return seed_split_world(session, now=T0)
+
+
+@pytest.fixture
+def rt(engine: Engine, clock):
+    from app.orders.runtime import Runtime
+    from app.simulators.courier import SimulatedCourier
+    from app.simulators.payments import SimulatedPaymentProvider
+
+    return Runtime(
+        sessions=sessionmaker(engine, expire_on_commit=False),
+        clock=clock,
+        merchant=SimulatedMerchant(engine, clock),
+        payments=SimulatedPaymentProvider(engine, clock, secret=WEBHOOK_SECRET, environment="test"),
+        courier=SimulatedCourier(engine, clock),
+        webhook_secret=WEBHOOK_SECRET,
+        environment="test",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _clear_injected_faults(request):
+    """Faults are per-test; one test's unconsumed fault must not leak into the next."""
+    yield
+    if "engine" in request.fixturenames:
+        engine = request.getfixturevalue("engine")
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM sim_faults"))
+
+
+@pytest.fixture(autouse=True)
+def _kill_switch_must_not_leak(request):
+    """A test that leaves the financial kill switch engaged fails here, not in later tests."""
+    yield
+    if "engine" not in request.fixturenames:
+        return
+    engine = request.getfixturevalue("engine")
+    with engine.begin() as conn:
+        engaged = (
+            conn.execute(text("SELECT scope FROM kill_switches WHERE engaged")).scalars().all()
+        )
+        if engaged:
+            conn.execute(text("UPDATE kill_switches SET engaged = false, reason = 'test reset'"))
+    if engaged:
+        pytest.fail(f"kill switch left engaged: {engaged}")

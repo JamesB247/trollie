@@ -9,8 +9,11 @@ from app.ledger import models as ledger_models  # noqa: F401
 from app.merchants import models as merchants_models  # noqa: F401
 from app.models import Base
 from app.offers import models as offers_models  # noqa: F401
+from app.orders import models as orders_models  # noqa: F401
+from app.payments import models as payments_models  # noqa: F401
 from app.products import models as products_models  # noqa: F401
 from app.quotes import models as quotes_models  # noqa: F401
+from app.reconciliation import models as reconciliation_models  # noqa: F401
 from app.simulators import models as simulators_models  # noqa: F401
 
 metadata = Base.metadata

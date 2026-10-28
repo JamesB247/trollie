@@ -56,3 +56,53 @@ class SimMerchantOrder(Base):
     lines: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
     state: Mapped[str] = mapped_column(Text)
     reason: Mapped[str | None] = mapped_column(Text)
+
+
+class SimPayment(Base):
+    __tablename__ = "sim_payments"
+
+    provider_ref: Mapped[str] = mapped_column(Text, primary_key=True)
+    # Merchant-side reference echoed in every event, as real providers do.
+    client_key: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(Text)
+    collection: Mapped[str | None] = mapped_column(Text)
+    reference: Mapped[str | None] = mapped_column(Text)
+    amount_minor: Mapped[int]
+    status: Mapped[str] = mapped_column(Text)
+    parent_ref: Mapped[str | None] = mapped_column(Text)
+    beneficiaries: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    captured_minor: Mapped[int] = mapped_column(default=0)
+    refunded_minor: Mapped[int] = mapped_column(default=0)
+    settled: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SimIdempotencyKey(Base):
+    __tablename__ = "sim_payment_idempotency"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    request_hash: Mapped[str] = mapped_column(Text)
+    provider_ref: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SimWebhook(Base):
+    __tablename__ = "sim_webhooks"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    event_id: Mapped[str] = mapped_column(Text)
+    body: Mapped[str] = mapped_column(Text)
+    deliver_after: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    deliveries_remaining: Mapped[int] = mapped_column(default=1)
+    created_at: Mapped[datetime] = created_at()
+
+
+class SimCourierBooking(Base):
+    __tablename__ = "sim_courier_bookings"
+
+    booking_ref: Mapped[str] = mapped_column(Text, primary_key=True)
+    courier_ref: Mapped[str] = mapped_column(Text, unique=True)
+    slot_id: Mapped[uuid.UUID]
+    location_id: Mapped[uuid.UUID]
+    address_version_id: Mapped[uuid.UUID]
+    state: Mapped[str] = mapped_column(Text)

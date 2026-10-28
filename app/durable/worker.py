@@ -30,14 +30,22 @@ def run_once(
         lease = jobs.claim(session, worker=worker, clock=clock, kinds=list(handlers))
     if lease is None:
         return False
+    handler = handlers[lease.kind]
     with sessions() as session:
         try:
+            if getattr(handler, "own_transactions", False):
+                # Orchestration steps commit their own state; ack separately afterwards.
+                handler(None, lease.payload)
+                with session.begin():
+                    jobs.ack(session, lease)
+                return True
             with session.begin():
-                handlers[lease.kind](session, lease.payload)
+                handler(session, lease.payload)
                 if not jobs.ack(session, lease):
                     raise RuntimeError("lease lost before ack")
         except Exception as exc:  # noqa: BLE001 - every failure is recorded on the job
             log.warning("job %s (%s) failed: %s", lease.job_id, lease.kind, exc)
+            session.rollback()
             with session.begin():
                 jobs.fail(session, lease, f"{type(exc).__name__}: {exc}", clock=clock)
     return True
