@@ -104,3 +104,7 @@ Record choices made during the build here, newest last, with the related D-numbe
 
 | Date | ID | Decision | Related |
 |---|---|---|---|
+| 2026-10-28 | I-001 | Python 3.12, dependencies pinned in `uv.lock`, uv 0.11.32 in image and CI. `httpx` kept for the test client (starlette deprecation warning accepted; replacement package not yet vetted). | D-S04 |
+| 2026-10-28 | I-002 | Single-row `deployment_marker` table records environment and `synthetic=true`. Migrations refuse to create a live-marked database; app startup refuses a marker that differs from the runtime or a synthetic DB under a live runtime. | W20, D-S04 |
+| 2026-10-28 | I-003 | `TROLLIE_ENV=live` refuses to start: no live adapters exist. Mandate fixture requires `TROLLIE_MANDATE_FIXTURE_ENABLED=true` and `TROLLIE_ENV=test`. | A2, D-S04 |
+| 2026-10-28 | I-004 | Development tests run against a local Postgres 16; `docker compose up` is verified by a CI job, as the dev sandbox has no Docker daemon. | DoD |
