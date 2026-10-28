@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import Engine, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.clock import FixedClock
@@ -15,16 +15,6 @@ from app.durable.models import InboxEvent, Job, JobState, OutboxEvent, RejectedE
 from app.errors import ErrorCode, TrollieError
 
 T0 = datetime(2026, 11, 2, 8, 0, tzinfo=UTC)
-
-
-@pytest.fixture
-def clock() -> FixedClock:
-    return FixedClock(T0)
-
-
-@pytest.fixture
-def sessions(engine: Engine) -> sessionmaker[Session]:
-    return sessionmaker(engine, expire_on_commit=False)
 
 
 # --- T25: business-operation idempotency ---------------------------------------------

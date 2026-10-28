@@ -13,11 +13,14 @@ from alembic import command
 from alembic.config import Config
 from hypothesis import settings as hypothesis_settings
 from sqlalchemy import Engine, create_engine, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 import app.all_models  # noqa: F401
+from app.clock import FixedClock
 from app.config import Environment, Settings
+from app.registry import register_all
 from app.seed import seed
+from app.simulators.merchant import SimulatedMerchant
 
 TEST_DATABASE_URL = os.environ.get(
     "TROLLIE_TEST_DATABASE_URL",
@@ -45,6 +48,7 @@ def test_settings() -> Settings:
 
 @pytest.fixture(scope="session")
 def engine(test_settings: Settings) -> Iterator[Engine]:
+    register_all()
     engine = create_engine(test_settings.database_url)
     reset_schema(engine)
     migrate(test_settings.database_url, Environment.TEST.value)
@@ -74,3 +78,18 @@ def catalogue(engine: Engine) -> dict[str, uuid.UUID]:
 hypothesis_settings.register_profile("default", max_examples=300)
 hypothesis_settings.register_profile("thorough", max_examples=5000)
 hypothesis_settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
+
+
+@pytest.fixture
+def sessions(engine: Engine) -> sessionmaker[Session]:
+    return sessionmaker(engine, expire_on_commit=False)
+
+
+@pytest.fixture
+def clock() -> "FixedClock":
+    return FixedClock(T0)
+
+
+@pytest.fixture
+def merchant(engine: Engine, clock) -> "SimulatedMerchant":
+    return SimulatedMerchant(engine, clock)
