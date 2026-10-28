@@ -1,6 +1,6 @@
-# Trollie — Product Requirements Document (v2.1, 28 October 2026)
+# Trollie — Product Requirements Document (v2.2, 28 October 2026)
 
-> Product baseline. The separate **Engineering Review and Implementation Blueprint (2026-10-28)** (`docs/ENGINEERING_BLUEPRINT.md`) is the implementation baseline and takes precedence on anything technical. The opening "PoC Architecture" section is historical and non-normative.
+> Product baseline. The separate **Engineering Review and Implementation Blueprint (2026-10-28)** (`docs/ENGINEERING_BLUEPRINT.md`) is the implementation baseline and takes precedence on anything technical. The opening "PoC Architecture" section is historical and non-normative. Adopted decisions and superseded clauses are recorded in `DECISIONS.md`; the wallet addendum (`docs/WALLET_AND_SPRINT_DECISIONS_ADDENDUM.md`) is adopted with amendments A1–A6.
 
 ---
 
@@ -101,7 +101,7 @@ Three request types:
 - **Open searches:** "Find me curtains" → agent asks for size, colour, budget; presents options; user picks.
 
 Mechanics:
-- **Envelopes (Stage D):** until the wallet gate clears, an envelope is a planning budget, not reserved money. Later: distinguish notional budget, internal reservation, provider authorisation hold and settlement; never reserve scarce household cash months ahead.
+- **Envelopes (Stage D):** until the wallet gate clears, an envelope backed by **live** money is a planning budget, not reserved money. In the synthetic build, customer-owned envelopes with exclusive agent allocations are real reservations against simulated funds (DECISIONS.md D-W01). Later: distinguish notional budget, internal reservation, provider authorisation hold and settlement; never reserve scarce household cash months ahead.
 - **Rhythm learning:** cadence produces a confidence-qualified suggestion; purchase requires confirmation until a versioned standing mandate exists.
 - **Scheduled mandates:** timezone (Africa/Johannesburg), recurrence, next run, end date, cumulative cap, constraints, lead times, version; revalidate funds, merchant, address and constraints at execution; revocation stops queued jobs; a late job pauses rather than executes.
 - **Heads-up:** a notification is not consent; delivery/read status and silence never imply approval.
@@ -485,6 +485,7 @@ Draft (counsel to approve; not a narrowing of statutory remedies): "We submit yo
 **Status:** PRD v2.1 is sufficient to guide a proof of concept; it does not authorise a production financial or fulfilment launch. Next milestone: signed merchant and payment-provider agreements, demonstrated end-to-end order execution, measured unit economics.
 
 ## Change log
+- **v2.2 (28 Oct 2026, wallet addendum adopted):** wallet and agent-specific spending accounts restored as a core product capability; synthetic wallet (W1–W3) and a bounded, passkey-approved mandate fixture added to the current build; real deposits, custody and withdrawals remain gated behind the Customer funds launch gate. Pay-per-order remains an interim live route; whether it launches before the wallet is a founder decision. See `DECISIONS.md`.
 - **v2.1 (28 Oct 2026, engineering blueprint):** edits applied in place — original opening marked historical; mobile-web-first stack; WhatsApp compliance moved to a dated gate; payment rewritten into separate approval / payment-operation / settlement records with rail-specific branches and a provider feasibility gate (Stitch one-destination split and proportional-refund constraints recorded); must-have precedence rule and partial-fulfilment decision table; merchant-model categorical liability/tax claims removed; customer promise redrafted; economics corrected (R25 example withdrawn; R2,000 with R35 subsidy = −R2.79; two-store sensitivity added); 95% made a reliability target with defined window, not a stop condition; settlement release control recorded as a capability field. The separate Engineering Review and Implementation Blueprint (2026-10-28) is adopted as the implementation baseline.
 - **v2 (28 Oct 2026):** incorporated two independent reviews — wallet moved to a gated stage; pay-per-order Stage C; explicit per-order approval; contradictions resolved; regulatory register updated (SARB framework timeline, PASA transition, NPS Directive 1/2024, CRS R.6886, GN7B, VAT/B34); competitor corrections (Grocify, Pixie, Pingo, B2B incumbents); issuer prospect list corrected; delivery suitability-first; envelope encryption; unit economics, 60-day validation plan, launch gates, acceptance tests and open decisions added.
 - **v1 (28 Oct 2026):** original agentic-wallet concept and PoC architecture.

@@ -1,0 +1,106 @@
+# Trollie — Decision log
+
+Decisions the governing documents leave open, or that change them. Each entry records: ID, status, owner role, options, chosen option, evidence, date, review trigger, affected requirements and any **superseded clauses** (quoted exactly).
+
+PRD decision IDs D01–D10 (blueprint §3.2) remain **open** unless an entry below says otherwise. Nothing in this file closes a legal, provider, merchant or courier gate; those need their own evidence.
+
+Sources:
+- **BP** — `docs/ENGINEERING_BLUEPRINT.md` v1.0
+- **PRD** — `docs/PRD.md` v2.1 (amended to v2.2 by this log)
+- **ADD** — `docs/WALLET_AND_SPRINT_DECISIONS_ADDENDUM.md` (proposed 2026-10-28)
+- **BR** — builder review of ADD, 2026-10-28 (amendments A1–A6 below)
+
+---
+
+## Adoption record — 2026-10-28
+
+**Founder decision (2026-10-28):** adopt ADD with builder amendments A1–A6.
+
+Adopted: D-W01, D-W02, D-W03, D-S01, D-S02, D-S03 (§9.1–§9.7), D-S04, D-S05, D-S06 as written in ADD, except where an amendment below changes them. Where ADD and an amendment differ, the amendment wins.
+
+ADD does **not** relax any approval, privacy, reconciliation or money-integrity control in BP. Where ADD is silent, BP still governs.
+
+### Superseded clauses
+
+| Document | Clause (exact text) | Replaced by |
+|---|---|---|
+| BP §3.1 | `\| Wallet \| None \| Existing requirement \|` | Synthetic wallet module in scope (D-W01–W03); live stored value still gated |
+| CLAUDE.md, "What Trollie is" | "The customer keeps control of payment. No stored-value wallet." | Customer funds a **simulated** wallet or pays per order; no live stored value |
+| CLAUDE.md, out of scope | "Stored-value wallet, envelopes as real reservations, standing mandates/auto-approve, …" | Synthetic wallet, envelopes and bounded mandate fixture in scope; real deposits/custody/withdrawals remain out |
+| CLAUDE.md, non-negotiable rules | "No code path from an agent call to authorised spend." | "No agent call results in spend without an owner-signed authority — a quote-bound approval or a versioned, passkey-approved mandate — verified by the trusted executor." (A2) |
+| CLAUDE.md, scope heading | "milestones M0–M3 only" | "M0 baseline + M2–M3 synthetic commerce + W1–W3 synthetic wallet; M1 open" (D-S01) |
+| CLAUDE.md, tests | "T01–T30 and T45–T54" | Adds T31–T40, T42 address control, W01–W20; status taxonomy (D-S02) |
+| CLAUDE.md, definition of done | M0–M3 paragraph | Revised DoD covering both funding sources (A1) |
+| PRD, Future purchases | "until the wallet gate clears, an envelope is a planning budget, not reserved money" | Applies to **live** money; synthetic envelopes are real reservations in the simulator |
+
+---
+
+## Builder amendments to ADD
+
+### A1 — Definition of done covers both funding sources
+**Problem:** ADD §13 demonstrates only wallet-funded purchases. Pay-per-order (card authorise/capture, immediate payment) remains a funding source (ADD §5) and BP §9.2–9.3 branches are still in scope.
+**Decision:** DoD demonstrates (a) pay-per-order on both simulated rails, including payment timeout, duplicate webhook and merchant rejection before capture (void) and after immediate payment (refund); and (b) the wallet flow in ADD §13.
+**Affects:** CLAUDE.md DoD; T08, T09, T26, T28, T37, T38, T39.
+
+### A2 — Mandate approval and execution
+**Problem:** ADD §6 does not say how a mandate is approved, and conflicts literally with CLAUDE.md's "no code path from an agent call to authorised spend".
+**Decision:**
+1. A mandate is an immutable, versioned record with a canonical hash. It becomes active only through the same WebAuthn ceremony as quote approval: single-use challenge bound to the mandate hash, user verification required. Any change is a new version needing a new ceremony.
+2. Mandate execution is **off by default**. It is enabled only by `TROLLIE_MANDATE_FIXTURE_ENABLED=true` **and** `TROLLIE_ENV=test`. Any other combination with the flag set refuses to start.
+3. Every mandate purchase still produces an immutable quote. The trusted executor checks the quote against the mandate (merchant set, address version, items/categories, per-order cap, period cap, velocity, validity window, revocation state) under lock before reserving funds. The agent can request execution; it cannot sign, approve or post.
+4. Non-negotiable rule reworded as in the superseded-clauses table.
+**Affects:** W06, W08, W09, W15, W18; T18, T20, T21.
+
+### A3 — W05 tests the real race
+**Problem:** with exclusive envelopes, two agents spending their own allocations never contend for the same money.
+**Decision:** W05 becomes "**Concurrent spend on one envelope**": (a) one agent submits two reservations concurrently that together exceed the envelope; (b) an agent reserves while the owner de-allocates from that envelope; (c) an agent reserves while the owner redeems unallocated plus de-allocated funds. Invariant: no overspend, no double use, available ≥ 0 at every committed state. A separate test keeps two agents on separate envelopes to prove isolation (no cross-envelope draw).
+**Affects:** W05, W14.
+
+### A4 — Funding source for owner-approved purchases
+**Problem:** ADD does not say what funds a purchase the owner approves directly.
+**Decision:** the funding source is part of the quote's payment constraints (BP §5.2 "Payment product/method constraints") and is covered by the quote hash. Options: `pay_per_order:<rail>`, `wallet:unallocated`, `wallet:envelope:<id>`. The owner may approve from unallocated funds or any of their envelopes. An agent may only use its own envelope under its active grant. Changing the funding source is a material change requiring a new quote version and approval.
+**Affects:** quote snapshot schema; W06, W07, W16.
+
+### A5 — Refund destination for wallet-funded purchases
+**Decision:**
+- Refund of a wallet-funded purchase restores money to the **envelope it was drawn from** if that envelope still exists and its grant is active; otherwise to **owner unallocated**. The ledger records which.
+- Refunds never restore grant counters (per-period cumulative spend, velocity). Money and authority counters are separate (ADD §6).
+- Pay-per-order refunds go to the original payment reference only; never forced into wallet credit (ADD §5).
+**Affects:** W12, W18; T33, T34.
+
+### A6 — Build sequencing
+**Decision:** build in this order on one ledger:
+1. Shared core — schema, ledger posting procedure, outbox/inbox, idempotent financial operations, products/offers, optimiser, quotes, approval ceremony.
+2. Pay-per-order funding source on the simulated payment adapter (both rails), merchant and delivery simulators, compensation matrix.
+3. Wallet funding source (W1 → W2 → W3) reusing the same quote, approval, ledger and orchestration.
+No parallel or editable balance store at any stage.
+
+---
+
+## Day-one defaults (ADD §9, adopted)
+
+| ID | Decision | Notes |
+|---|---|---|
+| D-S03.1 | Strategies `cheapest`, `fastest_complete`, `balanced`. Balanced = min delivered total among feasible candidates completing by `min(customer_deadline, t_fastest + 30 min)`. Ties: fewer legs → earlier completion → stable offer IDs. | Policy versioned (`balanced-v1`) and shown in UI and quote. Synthetic default, not a delivery promise. |
+| D-S03.2 | Synthetic operational subledger per ADD §9.2 account groups. | Not a finance-approved chart; no legal ownership inferred. |
+| D-S03.3 | Structured promotion rules; non-stacking by default; unsupported promotions ignored. Fixtures: fixed/percentage line discount, same-SKU multibuy, delivery-fee threshold, verified loyalty price. | Integer rounding; deterministic allocation of order-level discounts for refunds. |
+| D-S03.4 | Postgres jobs table, `FOR UPDATE SKIP LOCKED`, lease owner/expiry, attempts, backoff, dead letter. | Queue is at-least-once; idempotency prevents duplicate effects. |
+| D-S03.5 | `cryptography` AES-256-GCM behind a versioned provider interface; key from gitignored file; AAD = owner + address version. | Fictional addresses only. Not equivalent to KMS custody. |
+| D-S03.6 | WebAuthn RP ID `localhost`, origin `http://localhost:8000`, page served by FastAPI; software authenticator (Chromium CDP) in tests; real verification via maintained library. | Real-device PIN and recovery remain `manual_pending`. |
+| D-S03.7 | Versioned simulated provider capability profiles, including one restrictive profile; wallet fields added. | Labelled invented; live adapters inherit nothing. |
+| D-S04 | Strategy names fixed as above; one-store/fewer-deliveries are option attributes. Merchant contract API authoritative; thin local merchant page/CLI harness (deliberate reduction from BP M2 portal). Wallet UI shows total/available/allocated/reserved/pending. Live credentials/endpoints refused; synthetic DB refused under live runtime. | |
+| D-S05 | No float, breakage or interchange income assumed; wallet economics modelled separately. | |
+| D-S06 | Fixtures use `operating_entity_demo` and fictional providers. IRONSKY role remains a founder/legal decision. | Linked to PRD open decision "Entity and IRONSKY", D01. |
+
+## Test status taxonomy (D-S02)
+
+Each acceptance test records scope, type, fixture, invariant, evidence artefact, limitations and one status: `passed_domain`, `passed_browser`, `passed_simulator`, `passed_environment`, `manual_pending`, `provider_pending`, `deferred_not_in_scope`, `failed`. Treatments for T03, T22, T23, T41, T43, T44, T46, T48 follow ADD §8.
+
+---
+
+## Implementation decisions
+
+Record choices made during the build here, newest last, with the related D-number.
+
+| Date | ID | Decision | Related |
+|---|---|---|---|
