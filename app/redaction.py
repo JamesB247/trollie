@@ -10,7 +10,10 @@ from typing import Any
 REDACTED = "[REDACTED]"
 
 # 13-19 digits, optionally separated by single spaces or dashes: card PANs and 13-digit SA IDs.
-_LONG_NUMBER = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
+# Not adjacent to letters or digits, so digit runs inside hashes are left alone.
+_LONG_NUMBER = re.compile(r"(?<![0-9A-Za-z])(?:\d[ -]?){12,18}\d(?![0-9A-Za-z])")
+# Identifiers must survive redaction intact; UUID groups joined by dashes look like long numbers.
+_UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 _SENSITIVE_KEYS = re.compile(
     r"(pan|card.?number|cvv|cvc|security.?code|id.?number|identity.?number|password|secret|pin)$",
     re.IGNORECASE,
@@ -18,7 +21,14 @@ _SENSITIVE_KEYS = re.compile(
 
 
 def redact_text(value: str) -> str:
-    return _LONG_NUMBER.sub(REDACTED, value)
+    parts: list[str] = []
+    last = 0
+    for match in _UUID.finditer(value):
+        parts.append(_LONG_NUMBER.sub(REDACTED, value[last : match.start()]))
+        parts.append(match.group())
+        last = match.end()
+    parts.append(_LONG_NUMBER.sub(REDACTED, value[last:]))
+    return "".join(parts)
 
 
 def redact(value: Any, key: str | None = None) -> Any:

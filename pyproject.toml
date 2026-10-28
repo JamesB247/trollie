@@ -40,3 +40,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# Dense synthetic data tables are kept one row per line for readability.
+"app/seed.py" = ["E501"]

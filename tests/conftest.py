@@ -4,7 +4,9 @@ Set TROLLIE_TEST_DATABASE_URL to point elsewhere; it must be a disposable databa
 """
 
 import os
+import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime
 
 import pytest
 from alembic import command
@@ -14,6 +16,7 @@ from sqlalchemy.orm import Session
 
 import app.all_models  # noqa: F401
 from app.config import Environment, Settings
+from app.seed import seed
 
 TEST_DATABASE_URL = os.environ.get(
     "TROLLIE_TEST_DATABASE_URL",
@@ -54,3 +57,13 @@ def db(engine: Engine) -> Iterator[Session]:
     because the ledger is append-only and cannot be cleaned between tests."""
     with Session(engine) as session:
         yield session
+
+
+T0 = datetime(2026, 11, 2, 8, 0, tzinfo=UTC)
+
+
+@pytest.fixture(scope="session")
+def catalogue(engine: Engine) -> dict[str, uuid.UUID]:
+    """The synthetic seed, created once at T0 for the whole test session."""
+    with Session(engine) as session, session.begin():
+        return seed(session, now=T0)
