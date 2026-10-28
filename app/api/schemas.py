@@ -1,0 +1,110 @@
+"""Request bodies. Every schema forbids unknown fields, so a caller (human or agent) cannot
+smuggle a price, payee, address, URL or status into any request (blueprint §13.2; T45, T47)."""
+
+import uuid
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class Strict(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class SessionIn(Strict):
+    address_version_id: uuid.UUID
+    budget_minor: int | None = Field(default=None, gt=0)
+    deadline: datetime | None = None
+
+
+class CandidateIn(Strict):
+    product_id: uuid.UUID
+    rank: int = Field(default=0, ge=0)
+    max_unit_price_minor: int | None = Field(default=None, gt=0)
+
+
+class QuantityIn(Strict):
+    packs: int | None = Field(default=None, gt=0)
+    measure: int | None = Field(default=None, gt=0)
+    unit: Literal["ml", "g", "each"] | None = None
+
+
+class ItemIn(Strict):
+    line_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._-]+$")
+    rule: Literal["locked", "preferred", "flexible"] = "flexible"
+    candidates: list[CandidateIn] = Field(min_length=1, max_length=10)
+    quantity: QuantityIn
+    must_have: bool = False
+    needs_clarification: str | None = Field(default=None, max_length=500)
+
+
+class EstimateIn(Strict):
+    allow_omit_optional: bool = False
+
+
+class FirmIn(Strict):
+    # Asked clearly, never preselected (PRD partial-fulfilment rules): no default.
+    fulfilment_mode: Literal["complete_required", "allow_partial"]
+    permitted_omissions: list[str] = Field(default_factory=list)
+    funding_source: str = Field(
+        pattern=r"^(pay_per_order:(card_auth_capture|immediate)|"
+        r"wallet:unallocated|wallet:envelope:[0-9a-f-]{36})$"
+    )
+
+
+class PurchaseRequestIn(Strict):
+    quote_id: uuid.UUID
+    note: str | None = Field(default=None, max_length=500)
+
+
+class ChallengeIn(Strict):
+    subject_type: Literal["quote", "mandate"]
+    subject_id: uuid.UUID
+
+
+class AssertionIn(Strict):
+    challenge_id: uuid.UUID
+    credential: dict[str, Any]
+
+
+class OrderIn(Strict):
+    approval_id: uuid.UUID
+
+
+class IssueIn(Strict):
+    leg_id: str
+    amount_minor: int = Field(gt=0)
+    reason: Literal["missing_item", "damaged", "wrong_item"]
+
+
+class AmountIn(Strict):
+    amount_minor: int = Field(gt=0)
+
+
+class AgentIn(Strict):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class GrantIn(Strict):
+    approval_mode: Literal["per_quote", "mandate"]
+    address_version_id: uuid.UUID
+    per_order_cap_minor: int = Field(gt=0)
+    period_cap_minor: int = Field(gt=0)
+    period_days: int = Field(default=7, gt=0, le=31)
+    max_orders_per_day: int = Field(default=3, gt=0, le=20)
+    valid_days: int = Field(default=30, gt=0, le=90)
+    merchant_ids: list[uuid.UUID] = Field(default_factory=list)
+    product_ids: list[uuid.UUID] = Field(default_factory=list)
+    categories: list[str] = Field(default_factory=list)
+    purpose: str = Field(default="household groceries", max_length=200)
+
+
+class ExecuteIn(Strict):
+    quote_id: uuid.UUID
+
+
+class PreferenceIn(Strict):
+    product_id: uuid.UUID | None = None
+    category: str | None = None
+    rule: Literal["locked", "preferred", "flexible"]

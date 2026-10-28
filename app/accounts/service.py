@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.accounts.crypto import AddressCipher
-from app.accounts.models import AddressVersion, CustomerAccount, LoyaltyMembership
+from app.accounts.models import AddressVersion, CustomerAccount, LoyaltyMembership, Preference
 from app.errors import ErrorCode, TrollieError
 
 
@@ -59,6 +59,50 @@ def verified_programmes(session: Session, account_id: uuid.UUID) -> set[str]:
             select(LoyaltyMembership.programme).where(
                 LoyaltyMembership.account_id == account_id,
                 LoyaltyMembership.verified_at.is_not(None),
+            )
+        )
+    )
+
+
+def propose_preference(
+    session: Session,
+    *,
+    account_id: uuid.UUID,
+    rule: str,
+    provenance: str,
+    product_id: uuid.UUID | None = None,
+    category: str | None = None,
+    now=None,
+) -> Preference:
+    """Customers' own preferences are confirmed on entry; anyone else's are proposals."""
+    pref = Preference(
+        account_id=account_id,
+        product_id=product_id,
+        category=category,
+        rule=rule,
+        provenance=provenance,
+        confirmed_at=now if provenance == "customer" else None,
+    )
+    session.add(pref)
+    session.flush()
+    return pref
+
+
+def confirm_preference(
+    session: Session, *, account_id: uuid.UUID, preference_id: uuid.UUID, now
+) -> Preference:
+    pref = session.get(Preference, preference_id, with_for_update=True)
+    if pref is None or pref.account_id != account_id:
+        raise TrollieError(ErrorCode.NOT_FOUND, "preference not found")
+    pref.confirmed_at = now
+    return pref
+
+
+def effective_preferences(session: Session, account_id: uuid.UUID) -> list[Preference]:
+    return list(
+        session.scalars(
+            select(Preference).where(
+                Preference.account_id == account_id, Preference.confirmed_at.is_not(None)
             )
         )
     )

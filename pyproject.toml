@@ -44,3 +44,8 @@ select = ["E", "F", "I", "B", "UP"]
 [tool.ruff.lint.per-file-ignores]
 # Dense synthetic data tables are kept one row per line for readability.
 "app/seed.py" = ["E501"]
+# Embedded JavaScript for the approval page is not Python.
+"app/api/pages.py" = ["E501"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Header", "fastapi.Query"]

@@ -46,3 +46,22 @@ class LoyaltyMembership(Base):
     programme: Mapped[str] = mapped_column(Text)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = created_at()
+
+
+class Preference(Base):
+    """A user-confirmed shopping rule with provenance (PRD "Product preferences").
+
+    Agent-proposed preferences start unconfirmed and are never used until the owner
+    confirms them; an untrusted suggestion is never promoted automatically (T48).
+    """
+
+    __tablename__ = "preferences"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customer_accounts.id"), index=True)
+    product_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("products.id"))
+    category: Mapped[str | None] = mapped_column(Text)
+    rule: Mapped[str] = mapped_column(Text)
+    provenance: Mapped[str] = mapped_column(Text)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = created_at()

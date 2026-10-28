@@ -43,7 +43,7 @@ def reset_schema(engine: Engine) -> None:
 
 @pytest.fixture(scope="session")
 def test_settings() -> Settings:
-    return Settings(env=Environment.TEST, database_url=TEST_DATABASE_URL)
+    return Settings(env=Environment.TEST, database_url=TEST_DATABASE_URL, run_worker=False)
 
 
 @pytest.fixture(scope="session")

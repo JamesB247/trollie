@@ -29,7 +29,12 @@ class Settings(BaseSettings):
     webauthn_rp_id: str = "localhost"
     webauthn_origin: str = "http://localhost:8000"
     address_key_file: str = "secrets/address_key"
+    # Generated on first run, gitignored. Local development secrets only.
+    session_secret_file: str = "secrets/session_secret"
+    webhook_secret_file: str = "secrets/simpay_webhook_secret"
     mandate_fixture_enabled: bool = False
+    # Run the job/webhook pump in a background thread (local development convenience).
+    run_worker: bool = True
 
 
 def check_startup(settings: Settings) -> None:
