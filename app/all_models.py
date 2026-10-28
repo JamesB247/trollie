@@ -15,5 +15,6 @@ from app.products import models as products_models  # noqa: F401
 from app.quotes import models as quotes_models  # noqa: F401
 from app.reconciliation import models as reconciliation_models  # noqa: F401
 from app.simulators import models as simulators_models  # noqa: F401
+from app.wallet import models as wallet_models  # noqa: F401
 
 metadata = Base.metadata

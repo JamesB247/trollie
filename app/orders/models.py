@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import ForeignKey, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,11 +14,20 @@ class Order(Base):
     same approval produce one logical purchase (T24)."""
 
     __tablename__ = "orders"
+    __table_args__ = (
+        # Exactly one authority: a quote-bound approval or a mandate execution (A2).
+        CheckConstraint(
+            "num_nonnulls(approval_id, mandate_execution_id) = 1", name="one_authority"
+        ),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customer_accounts.id"), index=True)
     quote_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("quotes.id"), unique=True)
-    approval_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("approvals.id"), unique=True)
+    approval_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("approvals.id"), unique=True)
+    mandate_execution_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("mandate_executions.id"), unique=True
+    )
     approved_hash: Mapped[str] = mapped_column(Text)
     execution_snapshot_hash: Mapped[str] = mapped_column(Text)
     funding_source: Mapped[str] = mapped_column(Text)

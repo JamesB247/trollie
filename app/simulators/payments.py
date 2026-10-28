@@ -462,3 +462,42 @@ class SimulatedPaymentProvider:
                 )
                 p.settled = True
         return {"provider": "simpay", "report_ref": report_ref, "lines": lines}
+
+    def incoming_transfer(
+        self,
+        *,
+        transfer_ref: str,
+        reference: str,
+        amount_minor: int,
+        status: str = "confirmed",
+        currency: str = "ZAR",
+        destination_account: str = "trollie-sim-collection",
+        deliveries: int = 1,
+    ) -> str:
+        """A simulated bank transfer into Trollie's collection account (W1)."""
+        event_id = f"evt_{uuid.uuid4().hex}"
+        body = json.dumps(
+            {
+                "id": event_id,
+                "type": f"funding.{status}",
+                "account": ACCOUNT,
+                "environment": self.environment,
+                "data": {
+                    "transfer_ref": transfer_ref,
+                    "reference": reference,
+                    "amount_minor": amount_minor,
+                    "currency": currency,
+                    "destination_account": destination_account,
+                },
+            }
+        )
+        with Session(self.engine) as s, s.begin():
+            s.add(
+                SimWebhook(
+                    event_id=event_id,
+                    body=body,
+                    deliver_after=self.clock.now(),
+                    deliveries_remaining=deliveries,
+                )
+            )
+        return event_id

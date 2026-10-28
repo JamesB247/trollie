@@ -1,5 +1,6 @@
 """Job handlers wiring verified provider events and outbox events to orchestration."""
 
+import logging
 import uuid
 from typing import Any
 
@@ -16,6 +17,7 @@ from app.payments.operations import apply_observation
 from app.payments.refunds import sync_refund
 from app.reconciliation.service import open_case
 
+log = logging.getLogger(__name__)
 ADVANCE = "order.advance"
 SUBSCRIBERS: dict[str, list[str]] = {}
 
@@ -42,6 +44,14 @@ def _process_inbox(rt: Runtime):
         if event.state != InboxState.RECEIVED:
             return
         data = event.payload
+        if event.event_type.startswith("funding."):
+            from app.wallet.service import apply_funding_event
+
+            apply_funding_event(
+                session, event_type=event.event_type, data=data, event_id=event.event_id
+            )
+            event.state = InboxState.PROCESSED
+            return
         op = session.scalars(
             select(FinancialOperation)
             .where(FinancialOperation.idempotency_key == data.get("client_key"))
@@ -120,7 +130,11 @@ def sweep(rt: Runtime) -> int:
         ]
     changed = 0
     for order_id, version in pending:
-        advance(rt, order_id)
+        try:
+            advance(rt, order_id)
+        except Exception:  # noqa: BLE001 - one order's failure must not stop the sweep
+            log.exception("sweep: order %s could not advance", order_id)
+            continue
         with rt.sessions() as s:
             if s.get(Order, order_id).version != version:
                 changed += 1
@@ -132,7 +146,10 @@ def sweep(rt: Runtime) -> int:
             )
         ]
     for refund_id, op_id, state in open_refunds:
-        rt.executor.reconcile(op_id)
-        if sync_refund(rt, refund_id) != state:
-            changed += 1
+        try:
+            rt.executor.reconcile(op_id)
+            if sync_refund(rt, refund_id) != state:
+                changed += 1
+        except Exception:  # noqa: BLE001
+            log.exception("sweep: refund %s could not be reconciled", refund_id)
     return changed

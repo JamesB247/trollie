@@ -22,6 +22,8 @@ class Runtime:
     provider_account: str = "sim-acct-1"
     # Test-only override to exercise a restrictive capability profile (T31).
     profile_override: str | None = None
+    # DECISIONS.md A2: only honoured when the settings allow it (TROLLIE_ENV=test).
+    mandate_fixture_enabled: bool = False
     executor: Executor = field(init=False)
 
     def __post_init__(self) -> None:

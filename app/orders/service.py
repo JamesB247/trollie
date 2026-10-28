@@ -126,25 +126,57 @@ def _incident(s: Session, kind: str, **details: Any) -> None:
 # --- Create and start ----------------------------------------------------------------
 
 
-def create_order(rt: Runtime, *, account_id: uuid.UUID, approval_id: uuid.UUID) -> uuid.UUID:
-    """Consume a valid approval and start exactly one execution for it (T18, T24, T31)."""
+def _authority(s: Session, rt: Runtime, account_id: uuid.UUID, approval_id, mandate_execution_id):
+    """Resolve the single authority for this execution: a passkey approval of the quote, or a
+    mandate execution recorded by the trusted executor (A2). Returns (quote id, hash, filter)."""
+    if (approval_id is None) == (mandate_execution_id is None):
+        raise TrollieError(ErrorCode.APPROVAL_INVALID, "exactly one authority is required")
+    if approval_id is not None:
+        approval = s.get(Approval, approval_id)
+        if (
+            approval is None
+            or approval.account_id != account_id
+            or approval.subject_type != ("quote")
+        ):
+            raise TrollieError(ErrorCode.APPROVAL_INVALID, "approval not found")
+        return approval.subject_id, approval.subject_hash, Order.approval_id == approval_id
+    from app.wallet.models import MandateExecution
+
+    if not rt.mandate_fixture_enabled:
+        raise TrollieError(ErrorCode.CAPABILITY_NOT_ENABLED, "mandate execution is disabled")
+    execution = s.get(MandateExecution, mandate_execution_id)
+    if execution is None:
+        raise TrollieError(ErrorCode.APPROVAL_INVALID, "mandate execution not found")
+    return (
+        execution.quote_id,
+        execution.quote_hash,
+        Order.mandate_execution_id == mandate_execution_id,
+    )
+
+
+def create_order(
+    rt: Runtime,
+    *,
+    account_id: uuid.UUID,
+    approval_id: uuid.UUID | None = None,
+    mandate_execution_id: uuid.UUID | None = None,
+) -> uuid.UUID:
+    """Consume a valid authority and start exactly one execution for it (T18, T24, T31)."""
     try:
         with rt.sessions() as s, s.begin():
-            approval = s.get(Approval, approval_id)
-            if (
-                approval is None
-                or approval.account_id != account_id
-                or (approval.subject_type != "quote")
-            ):
-                raise TrollieError(ErrorCode.APPROVAL_INVALID, "approval not found")
-            # Lock the quote first: concurrent requests for this approval queue here, then
+            quote_id, approved_hash, same_authority = _authority(
+                s, rt, account_id, approval_id, mandate_execution_id
+            )
+            # Lock the quote first: concurrent requests for this authority queue here, then
             # find the order the first one created (T24).
-            quote = s.get(Quote, approval.subject_id, with_for_update=True, populate_existing=True)
-            existing = s.scalars(select(Order).where(Order.approval_id == approval_id)).first()
+            quote = s.get(Quote, quote_id, with_for_update=True, populate_existing=True)
+            if quote.account_id != account_id:
+                raise TrollieError(ErrorCode.APPROVAL_INVALID, "approval not found")
+            existing = s.scalars(select(Order).where(same_authority)).first()
             if existing is not None:
-                return existing.id  # one logical purchase per approval
+                return existing.id  # one logical purchase per authority
             snapshot_hash = recompute_hash(quote)
-            if not (approval.subject_hash == quote.quote_hash == snapshot_hash):
+            if not (approved_hash == quote.quote_hash == snapshot_hash):
                 raise TrollieError(
                     ErrorCode.REAPPROVAL_REQUIRED, "approved conditions do not match the quote"
                 )  # T18
@@ -158,7 +190,12 @@ def create_order(rt: Runtime, *, account_id: uuid.UUID, approval_id: uuid.UUID) 
                 raise TrollieError(ErrorCode.QUOTE_EXPIRED, "quote expired; approve a new quote")
             require_not_paused(s, "payments")
             snapshot = quote.snapshot
-            profile = profile_for(snapshot["funding_source"], rt.profile_override)
+            wallet_funded = snapshot["funding_source"].startswith("wallet:")
+            profile = (
+                PROFILES["simwallet"]
+                if wallet_funded
+                else profile_for(snapshot["funding_source"], rt.profile_override)
+            )
             parties = _parties(
                 snapshot, {leg["leg_id"] for leg in snapshot["legs"]}, service_fee=True
             )
@@ -168,8 +205,9 @@ def create_order(rt: Runtime, *, account_id: uuid.UUID, approval_id: uuid.UUID) 
             order = Order(
                 account_id=account_id,
                 quote_id=quote.id,
-                approval_id=approval.id,
-                approved_hash=approval.subject_hash,
+                approval_id=approval_id,
+                mandate_execution_id=mandate_execution_id,
+                approved_hash=approved_hash,
                 execution_snapshot_hash=snapshot_hash,
                 funding_source=snapshot["funding_source"],
                 profile_key=profile.key,
@@ -193,16 +231,28 @@ def create_order(rt: Runtime, *, account_id: uuid.UUID, approval_id: uuid.UUID) 
                         line_ids=[ln["line_id"] for ln in leg["lines"]],
                     )
                 )
-            action = Action.AUTHORISE if profile.collection == "auth_capture" else Action.CHARGE
-            create_operation(
-                s,
-                order_id=order.id,
-                action=action,
-                profile=profile,
-                amount_minor=quote.maximum_payable_minor,
-                idempotency_key=f"order:{order.id}:{COLLECT}",
-                request={"quote_hash": quote.quote_hash},
-            )
+            if wallet_funded:
+                # W16: no external debit at all; funds are held inside the wallet instead.
+                from app.wallet.service import reserve
+
+                reserve(
+                    s,
+                    account_id=account_id,
+                    order_id=order.id,
+                    funding_source=snapshot["funding_source"],
+                    amount_minor=quote.maximum_payable_minor,
+                )
+            else:
+                action = Action.AUTHORISE if profile.collection == "auth_capture" else Action.CHARGE
+                create_operation(
+                    s,
+                    order_id=order.id,
+                    action=action,
+                    profile=profile,
+                    amount_minor=quote.maximum_payable_minor,
+                    idempotency_key=f"order:{order.id}:{COLLECT}",
+                    request={"quote_hash": quote.quote_hash},
+                )
             quote.state = QuoteState.EXECUTING
             quote.state_version += 1
             outbox.emit(
@@ -220,12 +270,18 @@ def create_order(rt: Runtime, *, account_id: uuid.UUID, approval_id: uuid.UUID) 
                 object_type="order",
                 object_id=order.id,
                 approval_id=str(approval_id),
+                mandate_execution_id=str(mandate_execution_id),
             )
             return order.id
     except IntegrityError:
-        # A concurrent request for the same approval won the unique constraint (T24).
+        # A concurrent request for the same authority won the unique constraint (T24).
         with rt.sessions() as s:
-            return s.scalars(select(Order.id).where(Order.approval_id == approval_id)).one()
+            column = (
+                Order.approval_id == approval_id
+                if approval_id
+                else Order.mandate_execution_id == mandate_execution_id
+            )
+            return s.scalars(select(Order.id).where(column)).one()
 
 
 def start_checkout(rt: Runtime, *, account_id: uuid.UUID, order_id: uuid.UUID) -> str | None:
@@ -269,7 +325,15 @@ def request_cancellation(rt: Runtime, *, account_id: uuid.UUID, order_id: uuid.U
 def advance(rt: Runtime, order_id: uuid.UUID, *, max_steps: int = 20) -> None:
     for _ in range(max_steps):
         with rt.sessions() as s:
-            state = s.get(Order, order_id).state
+            order = s.get(Order, order_id)
+            state, wallet_funded = order.state, order.funding_source.startswith("wallet:")
+        if wallet_funded:
+            from app.wallet.orders import WALLET_STEPS
+
+            step = WALLET_STEPS.get(state)
+            if step is None or not step(rt, order_id):
+                return
+            continue
         step = {
             "PAYMENT_PENDING": _payment_pending,
             "COMMITTING": _committing,
@@ -524,6 +588,31 @@ def _commit_leg(rt: Runtime, leg_id: uuid.UUID) -> None:
         res.version += 1
 
 
+def resolve_uncertain_leg(rt: Runtime, leg_id: uuid.UUID) -> str | None:
+    """Before cancelling, establish what the merchant actually has for an uncertain leg.
+    Returns the leg's resolved state, or None while the merchant cannot be reached."""
+    with rt.sessions() as s:
+        leg = s.get(OrderLeg, leg_id)
+        if leg.state not in ("COMMIT_REQUESTED", "UNKNOWN"):
+            return leg.state
+        ref = leg.commit_ref
+    try:
+        obs = rt.merchant.get_order(client_ref=ref)
+    except MerchantTimeout:
+        return None
+    with rt.sessions() as s, s.begin():
+        leg = s.get(OrderLeg, leg_id, with_for_update=True)
+        if leg.state == "COMMIT_REQUESTED":
+            LEG.move(leg, "UNKNOWN")
+        if obs.status in ("accepted", "ready"):
+            LEG.move(leg, "ACCEPTED")
+            leg.merchant_ref = obs.merchant_ref
+        else:  # rejected, or never received: no commitment exists under this reference
+            LEG.move(leg, "REJECTED")
+            leg.evidence = {**leg.evidence, "resolved_for_cancellation": obs.status}
+        return leg.state
+
+
 def _committing(rt: Runtime, order_id: uuid.UUID) -> bool:
     with rt.sessions() as s:
         pending = [
@@ -657,6 +746,12 @@ def _invalidate_quote(rt: Runtime, order_id: uuid.UUID) -> None:
 
 def _compensating(rt: Runtime, order_id: uuid.UUID) -> bool:
     """cancel_all: stop every leg, then void the hold or refund what was collected."""
+    with rt.sessions() as s:
+        uncertain = [
+            leg.id for leg in _legs(s, order_id) if leg.state in ("COMMIT_REQUESTED", "UNKNOWN")
+        ]
+    if any(resolve_uncertain_leg(rt, leg_id) is None for leg_id in uncertain):
+        return False  # not safe to release or refund until the merchant state is known
     with rt.sessions() as s:
         legs = [(leg.id, leg.state, leg.commit_ref) for leg in _legs(s, order_id)]
     for leg_id, state, commit_ref in legs:

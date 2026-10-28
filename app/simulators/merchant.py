@@ -187,7 +187,13 @@ class SimulatedMerchant:
 
     def get_order(self, *, client_ref):
         with Session(self.engine) as s:
-            return self._order_obs(s.get(SimMerchantOrder, client_ref), client_ref)
+            order = s.get(SimMerchantOrder, client_ref)
+            target = order.location_id if order else None
+            if target is not None and self._fault(s, target, "get_order") == (
+                "timeout_before_effect"
+            ):
+                raise MerchantTimeout(client_ref)
+            return self._order_obs(order, client_ref)
 
     def cancel_order(self, *, client_ref):
         with Session(self.engine) as s, s.begin():
