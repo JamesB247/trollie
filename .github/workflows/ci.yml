@@ -45,5 +45,13 @@ jobs:
           done
           docker compose logs
           exit 1
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.32"
+      - run: uv sync --frozen --python 3.12
+      # The definition of done, end to end, against the docker compose stack.
+      - run: uv run python -m scripts.demo --base-url http://localhost:8000
+      - if: failure()
+        run: docker compose logs app
       - if: always()
         run: docker compose down -v

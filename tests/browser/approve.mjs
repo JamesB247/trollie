@@ -8,7 +8,7 @@ const { chromium } = require('playwright');
 const { BASE_URL, TOKEN, QUOTE_ID } = process.env;
 const browser = await chromium.launch();
 try {
-  const context = await browser.newContext();
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
   const cdp = await context.newCDPSession(page);
   await cdp.send('WebAuthn.enable');
@@ -19,6 +19,7 @@ try {
   await page.goto(`${BASE_URL}/dev/login?token=${encodeURIComponent(TOKEN)}`);
   await page.goto(`${BASE_URL}/approve/quote/${QUOTE_ID}`);
   const text = await page.textContent('main');
+  if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT, fullPage: true });
   const status = page.locator('#msg');
 
   await page.getByRole('button', { name: 'Set up a passkey' }).click();
@@ -29,6 +30,7 @@ try {
   await status.filter({ hasText: 'created' }).waitFor({ timeout: 15000 });
   await page.getByRole('button', { name: 'Complete simulated payment step' }).click();
   await page.waitForURL(/\/orders\//, { timeout: 15000 });
+  if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT.replace('.png', '-status.png'), fullPage: true });
   const heading = await page.textContent('h1');
   console.log(JSON.stringify({ ok: true, heading, approvalPageText: text,
     orderUrl: page.url() }));

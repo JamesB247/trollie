@@ -900,6 +900,7 @@ def create_refund(
 ) -> uuid.UUID:
     """One refund per business key; total refunds never exceed what was collected (T33/T34)."""
     amount = sum(p["amount_minor"] for p in parties)
+    _hold_if_disputed(rt, order_id, business_key, amount)
     with rt.sessions() as s, s.begin():
         existing = s.scalars(select(Refund).where(Refund.business_key == business_key)).first()
         if existing is not None:
@@ -960,6 +961,38 @@ def create_refund(
             refund_id = refund.id
     submit_refund(rt, refund_id)
     return refund_id
+
+
+def _hold_if_disputed(rt: Runtime, order_id: uuid.UUID, business_key: str, amount: int) -> None:
+    """T35: while a chargeback is open the customer may already be reimbursed through it.
+    Record the overlap (committed on its own) and hold the refund for finance."""
+    from app.reconciliation.models import ReconciliationCase
+
+    with rt.sessions() as s, s.begin():
+        if s.scalars(select(Refund.id).where(Refund.business_key == business_key)).first():
+            return  # an existing refund is replayed, not re-decided
+        paid = _op(s, order_id, "capture") or _op(s, order_id, COLLECT)
+        if (
+            paid is None
+            or not s.scalars(
+                select(ReconciliationCase.id).where(
+                    ReconciliationCase.dedupe_key == f"dispute:{paid.id}",
+                    ReconciliationCase.state == "open",
+                )
+            ).first()
+        ):
+            return
+        open_case(
+            s,
+            dedupe_key=f"dispute-overlap:{paid.id}",
+            case_type="dispute_refund_overlap",
+            refs={"operation_id": str(paid.id), "requested_refund": business_key},
+            difference_minor=amount,
+        )
+    raise TrollieError(
+        ErrorCode.REFUND_HELD_DISPUTE_OPEN,
+        "refund held while a chargeback is open; finance will resolve",
+    )
 
 
 def submit_refund(rt: Runtime, refund_id: uuid.UUID) -> None:

@@ -105,6 +105,21 @@ async function simPay() {
 """
 
 
+FUNDING_LABELS = {
+    "pay_per_order:card_auth_capture": "card (provider-hosted checkout)",
+    "pay_per_order:immediate": "instant bank payment",
+    "wallet:unallocated": "your wallet (simulated)",
+}
+
+
+def funding_label(source: str | None) -> str:
+    if source is None:
+        return "not chosen"
+    if source.startswith("wallet:envelope:"):
+        return "your agent's wallet envelope (simulated)"
+    return FUNDING_LABELS.get(source, source)
+
+
 def money(minor: int) -> str:
     return f"R{minor / 100:,.2f}".replace(",", " ")
 
@@ -185,7 +200,7 @@ def approve_quote(
         f"<div class='row total'><span>Maximum total</span>"
         f"<span>{money(snap['maximum_payable_minor'])}</span></div>"
         f"<div class='muted'>Delivering to {e(dest['label'])} (address version {dest['version']})"
-        f" · paying with {e(snap['funding_source'] or 'not chosen')}</div></div>"
+        f" · paying with {e(funding_label(snap['funding_source']))}</div></div>"
         f"<div class='card muted'>{policy_text} Separate stores cannot give one all-or-nothing "
         f"transaction; if a store fails after paying we handle the cancellation or refund and "
         f"show its progress.</div>"

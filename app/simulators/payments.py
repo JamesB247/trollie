@@ -501,3 +501,25 @@ class SimulatedPaymentProvider:
                 )
             )
         return event_id
+
+    def open_dispute(self, *, provider_ref: str, amount_minor: int) -> str:
+        """The cardholder's bank opens a chargeback against a collected payment (T35)."""
+        with Session(self.engine) as s, s.begin():
+            p = s.get(SimPayment, provider_ref)
+            event_id = f"evt_{uuid.uuid4().hex}"
+            body = json.dumps(
+                {
+                    "id": event_id,
+                    "type": "dispute.opened",
+                    "account": ACCOUNT,
+                    "environment": self.environment,
+                    "data": {
+                        "provider_ref": provider_ref,
+                        "client_key": p.client_key,
+                        "status": "disputed",
+                        "amount_minor": amount_minor,
+                    },
+                }
+            )
+            s.add(SimWebhook(event_id=event_id, body=body, deliver_after=self.clock.now()))
+        return event_id

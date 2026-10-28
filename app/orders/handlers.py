@@ -52,6 +52,10 @@ def _process_inbox(rt: Runtime):
             )
             event.state = InboxState.PROCESSED
             return
+        if event.event_type == "dispute.opened":
+            _record_dispute(session, data, event)
+            event.state = InboxState.PROCESSED
+            return
         op = session.scalars(
             select(FinancialOperation)
             .where(FinancialOperation.idempotency_key == data.get("client_key"))
@@ -85,6 +89,42 @@ def _process_inbox(rt: Runtime):
         event.state = InboxState.PROCESSED
 
     return handle
+
+
+def _record_dispute(session: Session, data: dict[str, Any], event: InboxEvent) -> None:
+    """T35: a chargeback and a refund for the same payment could reimburse twice. Record the
+    dispute exposure; if refunds already exist, finance must resolve the overlap."""
+    op = session.scalars(
+        select(FinancialOperation).where(
+            FinancialOperation.idempotency_key == data.get("client_key")
+        )
+    ).one_or_none()
+    if op is None:
+        open_case(
+            session,
+            dedupe_key=f"unmatched:{event.id}",
+            case_type="unmatched_provider_event",
+            refs={"inbox_id": str(event.id), "event_type": event.event_type},
+        )
+        return
+    open_case(
+        session,
+        dedupe_key=f"dispute:{op.id}",
+        case_type="dispute_opened",
+        refs={"operation_id": str(op.id), "order_id": str(op.order_id)},
+        difference_minor=data.get("amount_minor"),
+    )
+    refunded = session.scalars(select(Refund).where(Refund.original_operation_id == op.id)).all()
+    if refunded:
+        open_case(
+            session,
+            dedupe_key=f"dispute-overlap:{op.id}",
+            case_type="dispute_refund_overlap",
+            refs={"operation_id": str(op.id), "refund_ids": [str(r.id) for r in refunded]},
+            difference_minor=min(
+                data.get("amount_minor") or 0, sum(r.amount_minor for r in refunded)
+            ),
+        )
 
 
 def _advance(rt: Runtime):

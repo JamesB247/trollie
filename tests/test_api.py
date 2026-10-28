@@ -413,3 +413,29 @@ def test_structured_errors_and_auth(api):
     assert api.get("/v1/catalogue/products").status_code == 403
     r = api.get("/v1/catalogue/products", headers={"Authorization": "Bearer forged.sig"})
     assert r.status_code == 403 and r.json()["code"] == "AUTHORITY_DENIED"
+
+
+def test_t43_damaged_item_issue_becomes_targeted_refund(api, catalogue):
+    user = User(api)
+    quote = firm_quote(user, basket(user, catalogue, items=(("tea-100", 1),)))
+    user.register_passkey()
+    approval_id = user.approve("quote", quote["quote_id"])
+    order_id = user.call(
+        "POST",
+        "/v1/orders",
+        json={"approval_id": approval_id},
+        headers={"Idempotency-Key": str(uuid.uuid4())},
+    ).json()["order_id"]
+    ref = user.call("POST", f"/v1/orders/{order_id}/checkout-sessions").json()["checkout_ref"]
+    api.post(f"/v1/dev/sim/checkouts/{ref}/complete", json={})
+    key = str(uuid.uuid4())
+    body = {"leg_id": "leg_1", "amount_minor": 1500, "reason": "damaged"}
+    first = user.call(
+        "POST", f"/v1/orders/{order_id}/issues", json=body, headers={"Idempotency-Key": key}
+    )
+    again = user.call(
+        "POST", f"/v1/orders/{order_id}/issues", json=body, headers={"Idempotency-Key": key}
+    )
+    assert first.status_code == 202 and first.json()["refund_id"] == again.json()["refund_id"]
+    money = user.call("GET", f"/v1/orders/{order_id}").json()["money"]
+    assert money["refund_requested_minor"] + money["refund_confirmed_minor"] == 1500

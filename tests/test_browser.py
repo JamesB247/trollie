@@ -142,6 +142,7 @@ def test_approval_page_with_virtual_passkey(server):
             "BASE_URL": base,
             "TOKEN": account["token"],
             "QUOTE_ID": firm["quote_id"],
+            "SCREENSHOT": os.environ.get("TROLLIE_SCREENSHOT", ""),
         },
     )
     result = json.loads(run.stdout.strip().splitlines()[-1])

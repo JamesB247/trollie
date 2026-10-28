@@ -314,3 +314,58 @@ def test_property_state_machines_only_follow_declared_transitions(machine, choic
             assert obj.version == before[1]
         else:
             assert machine.can(before[0], target) and obj.version == before[1] + 1
+
+
+# --- T35 chargeback/refund overlap, T43 issue refund, T44 recall --------------------
+
+
+def test_t35_chargeback_after_refund_flags_double_recovery(rt, db, paid_order):
+    capture = ops(db, paid_order.order_id)["capture"]
+    create_refund(
+        rt,
+        order_id=paid_order.order_id,
+        business_key=f"r:{uuid.uuid4()}",
+        parties=_merchant_part(paid_order, "leg_1", 1000),
+        reason="damaged",
+    )
+    rt.payments.open_dispute(provider_ref=capture.external_ref, amount_minor=capture.amount_minor)
+    pump(rt, rt.payments)
+    case = _cases(db, "dispute_refund_overlap", str(capture.id))
+    assert len(case) == 1 and case[0].difference_minor == 1000
+
+
+def test_t35_refund_during_open_chargeback_is_held(rt, db, paid_order):
+    capture = ops(db, paid_order.order_id)["capture"]
+    rt.payments.open_dispute(provider_ref=capture.external_ref, amount_minor=capture.amount_minor)
+    pump(rt, rt.payments)
+    with pytest.raises(TrollieError) as err:
+        create_refund(
+            rt,
+            order_id=paid_order.order_id,
+            business_key=f"r:{uuid.uuid4()}",
+            parties=_merchant_part(paid_order, "leg_1", 1000),
+            reason="damaged",
+        )
+    assert err.value.code.value == "REFUND_HELD_DISPUTE_OPEN"
+    assert _cases(db, "dispute_refund_overlap", str(capture.id))
+    assert db.scalars(select(Refund).where(Refund.order_id == paid_order.order_id)).all() == []
+
+
+def test_t44_recall_identifies_affected_orders(rt, db, paid_order):
+    from app.support.recalls import orders_containing
+
+    line = paid_order.quote.snapshot["legs"][0]["lines"][0]
+    hits = [
+        h
+        for h in orders_containing(db, uuid.UUID(line["product"]["id"]))
+        if h["order_id"] == str(paid_order.order_id)
+    ]
+    assert hits == [
+        {
+            "order_id": str(paid_order.order_id),
+            "account_id": str(paid_order.customer.account_id),
+            "state": "FULFILLING",
+            "seller": paid_order.quote.snapshot["legs"][0]["seller"]["legal_name"],
+            "units": line["units"],
+        }
+    ]
