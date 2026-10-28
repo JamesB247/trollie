@@ -1,0 +1,52 @@
+"""Structured error codes (blueprint §10.5)."""
+
+from enum import StrEnum
+
+
+class ErrorCode(StrEnum):
+    QUOTE_EXPIRED = "QUOTE_EXPIRED"
+    RESERVATION_EXPIRED = "RESERVATION_EXPIRED"
+    REAPPROVAL_REQUIRED = "REAPPROVAL_REQUIRED"
+    MUST_HAVE_UNAVAILABLE = "MUST_HAVE_UNAVAILABLE"
+    CAPABILITY_NOT_ENABLED = "CAPABILITY_NOT_ENABLED"
+    PROVIDER_STATE_UNKNOWN = "PROVIDER_STATE_UNKNOWN"
+    DUPLICATE_OPERATION_CONFLICT = "DUPLICATE_OPERATION_CONFLICT"
+    INSUFFICIENT_REFUND_RESERVE = "INSUFFICIENT_REFUND_RESERVE"
+    MERCHANT_SUSPENDED = "MERCHANT_SUSPENDED"
+    # Additions used by this build; recorded in DECISIONS.md.
+    LEDGER_INVARIANT_VIOLATION = "LEDGER_INVARIANT_VIOLATION"
+    FINANCIAL_ACTIONS_PAUSED = "FINANCIAL_ACTIONS_PAUSED"
+    INVALID_STATE_TRANSITION = "INVALID_STATE_TRANSITION"
+    NOT_FOUND = "NOT_FOUND"
+    APPROVAL_INVALID = "APPROVAL_INVALID"
+    AUTHORITY_DENIED = "AUTHORITY_DENIED"
+    INSUFFICIENT_FUNDS = "INSUFFICIENT_FUNDS"
+    VALIDATION_FAILED = "VALIDATION_FAILED"
+    EVENT_REJECTED = "EVENT_REJECTED"
+
+
+HTTP_STATUS = {
+    ErrorCode.NOT_FOUND: 404,
+    ErrorCode.DUPLICATE_OPERATION_CONFLICT: 409,
+    ErrorCode.INVALID_STATE_TRANSITION: 409,
+    ErrorCode.QUOTE_EXPIRED: 409,
+    ErrorCode.RESERVATION_EXPIRED: 409,
+    ErrorCode.REAPPROVAL_REQUIRED: 409,
+    ErrorCode.MUST_HAVE_UNAVAILABLE: 409,
+    ErrorCode.APPROVAL_INVALID: 403,
+    ErrorCode.AUTHORITY_DENIED: 403,
+    ErrorCode.FINANCIAL_ACTIONS_PAUSED: 503,
+    ErrorCode.PROVIDER_STATE_UNKNOWN: 202,
+}
+
+
+class TrollieError(Exception):
+    def __init__(self, code: ErrorCode, message: str, **details: object) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
+        self.details = details
+
+    @property
+    def http_status(self) -> int:
+        return HTTP_STATUS.get(self.code, 422)

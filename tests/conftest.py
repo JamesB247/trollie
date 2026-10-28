@@ -10,7 +10,9 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import Engine, create_engine, text
+from sqlalchemy.orm import Session
 
+import app.all_models  # noqa: F401
 from app.config import Environment, Settings
 
 TEST_DATABASE_URL = os.environ.get(
@@ -44,3 +46,11 @@ def engine(test_settings: Settings) -> Iterator[Engine]:
     migrate(test_settings.database_url, Environment.TEST.value)
     yield engine
     engine.dispose()
+
+
+@pytest.fixture
+def db(engine: Engine) -> Iterator[Session]:
+    """A session on the shared test database. Tests use fresh UUID owners for isolation,
+    because the ledger is append-only and cannot be cleaned between tests."""
+    with Session(engine) as session:
+        yield session
