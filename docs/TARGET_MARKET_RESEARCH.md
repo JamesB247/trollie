@@ -1,6 +1,6 @@
 # Target market: who Trollie is for, and in what order
 
-Research for the founders, 29 October 2026. Not yet adopted into the proposal or the PRD.
+Research for the founders, 29 October 2026. The founders' decisions are in section 7; not yet reflected in the proposal or the PRD.
 Figures come from National Treasury, the South African Reserve Bank (SARB), Stats SA, the
 Pietermaritzburg Economic Justice & Dignity group (PMBEJD), Shoprite's FY2026 results and
 press coverage; secondary sources are marked.
@@ -88,6 +88,31 @@ reported by Investing.com; check against the official results).
 - **Pricing differs by segment:** service fee or subscription for segment A; near-free for C and
   D, funded by retailer commission.
 - **The Money Market account and Xtra Savings** are natural links for the mass market.
+
+## 7. Founders' decisions (29 October 2026)
+
+1. **Launch target: voice-first households and people who want AI agents.**
+   - Households who would rather speak than type, in their own language (isiZulu, Sesotho,
+     Setswana and others).
+   - People who want an AI agent, Trollie's or their own, to shop for them.
+   - Stokvels move to a later phase.
+2. **Voice flow.** The household speaks the order in their language. Trollie identifies the
+   products, reads the order back by voice and in writing in the same language, and the
+   household confirms. Trollie then places the order and manages it through to delivery.
+3. **The app is the trust anchor.**
+   - Delivery addresses are added and changed only in the Trollie app, never through chat or an
+     agent.
+   - Every purchase is confirmed in the app, with a prompt on the phone and a device check.
+   - An agent, Trollie's or the household's own, can request an order. It cannot add an address
+     or confirm a purchase.
+4. **Nearest store.** Each saved address is linked to the closest Group stores that can serve it.
+   The agent quotes only from those stores; the household can change its preferred store in the
+   app.
+5. **Stokvels, later phase.**
+   - Bulk buying at tiered prices, ordered by voice.
+   - The committee approves the group order.
+   - Each member's share is delivered to that member's own address, taken from their own Trollie
+     account, so nothing has to come to one location.
 
 ## Sources
 
