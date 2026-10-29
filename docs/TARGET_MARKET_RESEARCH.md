@@ -113,6 +113,15 @@ reported by Investing.com; check against the official results).
    - The committee approves the group order.
    - Each member's share is delivered to that member's own address, taken from their own Trollie
      account, so nothing has to come to one location.
+6. **Money Market account as the funding route (to pitch to the Group).**
+   - Households keep their money in their own Shoprite Money Market account: cash deposited at a
+     till, or a SASSA payout switched to it.
+   - With their consent, they link it to Trollie, and each confirmed order is paid from that
+     balance.
+   - Trollie never holds the money. It uses the Group's ecosystem rather than building its own
+     wallet.
+   - For lower-income households, propose zero or very low Trollie fees, funded by the Group's
+     commission on those orders rather than by the household.
 
 ## Sources
 
