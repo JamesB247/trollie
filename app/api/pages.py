@@ -4,9 +4,11 @@ The approval page is rendered from the server's immutable record only; nothing d
 comes from the client or the agent (blueprint §13.1; PRD UX "authoritative basket").
 """
 
+import base64
 import html
 import uuid
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -23,19 +25,34 @@ from app.wallet.models import Grant
 
 router = APIRouter()
 
+# Brand colours (docs/BRAND.md): cream background, evergreen headings and primary buttons,
+# ink body text, sage panels, golden yellow for small highlights with dark text on it.
 STYLE = """
-:root{--bg:#f7f7f5;--fg:#1d1d1b;--muted:#5f5f5a;--line:#dcdcd6;--accent:#1f6f4a;--warn:#8a4b00}
+:root{--cream:#F6F3E9;--evergreen:#123D32;--gold:#F4C95D;--sage:#DDE8DA;--ink:#172B24;
+--muted:#56655f;--line:#E4DECB}
 *{box-sizing:border-box}body{margin:0;font:16px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;
-background:var(--bg);color:var(--fg)}main{max-width:560px;margin:0 auto;padding:16px}
-.banner{background:#fff3d6;border:1px solid #e8c77a;color:var(--warn);padding:8px 12px;
-border-radius:8px;font-weight:600;margin-bottom:12px}h1{font-size:1.3rem;margin:.2rem 0 1rem}
-.card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0}
+background:var(--cream);color:var(--ink)}main{max-width:560px;margin:0 auto;padding:16px}
+.brand{display:flex;align-items:center;gap:8px;font-weight:800;font-size:1.15rem;
+color:var(--evergreen);margin:4px 0 12px}.brand img{width:28px;height:28px;border-radius:6px}
+.banner{background:var(--gold);color:var(--ink);padding:8px 12px;
+border-radius:8px;font-weight:600;margin-bottom:12px}
+h1{font-size:1.3rem;margin:.2rem 0 1rem;color:var(--evergreen)}
+.card{background:#FFFDF8;border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0}
 .row{display:flex;justify-content:space-between;gap:12px}.muted{color:var(--muted);font-size:.9rem}
 .total{font-size:1.2rem;font-weight:700}button{width:100%;padding:14px;margin-top:10px;
-font-size:1rem;border:0;border-radius:10px;background:var(--accent);color:#fff}
-button.secondary{background:#fff;color:var(--accent);border:1px solid var(--accent)}
+font-size:1rem;border:0;border-radius:10px;background:var(--evergreen);color:var(--cream)}
+button.secondary{background:transparent;color:var(--evergreen);border:1px solid var(--evergreen)}
 ul{padding-left:1.1rem;margin:.3rem 0}#msg{margin-top:10px;font-weight:600}
 """
+
+BRAND_ICON = (
+    "data:image/png;base64,"
+    + base64.b64encode(
+        (
+            Path(__file__).resolve().parent.parent / "static" / "brand" / "favicon_64.png"
+        ).read_bytes()
+    ).decode()
+)
 
 SCRIPT = """
 const b64u = {
@@ -133,8 +150,10 @@ def page(title: str, body: str, *, data: str = "") -> HTMLResponse:
     return HTMLResponse(
         f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        f"<title>{html.escape(title)}</title><style>{STYLE}</style></head>"
-        f"<body {data}><main><div class='banner'>SIMULATED — NOT REAL MONEY. Fictional stores."
+        f"<title>{html.escape(title)}</title><link rel='icon' href='{BRAND_ICON}'>"
+        f"<style>{STYLE}</style></head>"
+        f"<body {data}><main><div class='brand'><img src='{BRAND_ICON}' alt=''>trollie</div>"
+        f"<div class='banner'>SIMULATED — NOT REAL MONEY. Fictional stores."
         f"</div>{body}<div id='msg' role='status'></div></main><script>{SCRIPT}</script>"
         f"</body></html>"
     )
