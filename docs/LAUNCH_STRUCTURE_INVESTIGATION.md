@@ -169,6 +169,24 @@ for a 5–7% service fee.
   adapter is replaced and nothing else moves. The ledger gains accounts for stock purchased
   for resale and purchase-price variance; the wallet stays off.
 
+**Buying channels built for resellers** (research 29 October 2026; current terms still to be
+confirmed with each company)
+
+| Channel | Who it serves | What is known | Fit |
+|---|---|---|---|
+| Shoprite Cash & Carry online (shopritecashandcarry.co.za) | Spaza shops and small retailers buying stock to resell | Launched July 2024. Online ordering with saved orders; free delivery within 50 km; card, EFT and store credit | Staples in case packs, delivered to a Trollie address |
+| Red Star Wholesale (formerly Checkers Food Services) | Catering and hospitality businesses in Gauteng, the Western Cape and KwaZulu-Natal | Free delivery over R1 000, six days a week. A Business Buying Card gives 2.5% off at Checkers and Checkers Hyper, with 30 days' interest-free credit | A trade account plus a discount for in-store picking at Checkers |
+| Makro Business (Massmart, owned by Walmart) | Businesses of all sizes | Online business site launched September 2023; a trade account; delivery, collection and lockers | Bulk and general merchandise |
+| Pick n Pay | — | No current business-account channel found. Pick n Pay sells through Takealot's Mr D under a commercial agreement | Partnership route only |
+| Checkers Sixty60 | Consumers | No business or corporate account found | Not a channel |
+
+Unlike consumer delivery apps, these wholesale channels exist so that businesses can buy stock
+to resell. That is Trollie's position in Phase 0. They deliver in bulk to a business
+address, not to each household. Buying through them therefore means a small Trollie hub
+that splits cases into customer orders and hands them to a courier. A hub that handles food
+needs a Certificate of Acceptability and a business licence (see "Dark store premises"
+above). Fresh produce and single items still come from in-store picking.
+
 **Still open**
 
 - The default substitution rule.
@@ -216,3 +234,7 @@ for a 5–7% service fee.
 - [Elluminati: how OneCart works](https://www.elluminatiinc.com/?p=75329)
 - [Checkers Xtra Savings Plus terms (personal use)](https://www.checkers.co.za/terms-and-conditions/legal-terms-and-conditions-xtrasavingsplus)
 - [TechCentral: Pick n Pay partners with Takealot](https://techcentral.co.za/pick-n-pay-partners-with-takealot-in-online-shopping-push/211192/)
+- [Supermarket & Retailer: Shoprite Cash & Carry online and bulk delivery](https://supermarket.co.za/index.php/innovation-and-technology/6603-shoprite-launches-online-shopping-and-bulk-delivery-service-for-spaza-shops-and-small-businesses)
+- [Shoprite Holdings: Red Star Wholesale](https://www.shopriteholdings.co.za/newsroom/2023/red-star-wholesale-and-catering-services.html)
+- [Shoprite Holdings: business buying cards](https://www.shopriteholdings.co.za/contactus/our-cards.html)
+- [Bizcommunity: Massmart launches Makro Business](https://www.bizcommunity.com/DailyNewsletter/196/160/20230929.html)
