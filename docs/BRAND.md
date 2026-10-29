@@ -3,6 +3,13 @@
 Use these exact values for the website, the platform's pages and presentation templates.
 Assets are in `docs/brand/`; the app's pages use `app/static/brand/favicon_64.png`.
 
+## Slogan
+
+> **Your list. Taken care of.**
+> The whole shop, one honest total, nothing bought until you say yes.
+
+Locked on 29 October 2026. Wording, the three promises and words to avoid are in [`POSITIONING.md`](POSITIONING.md). The earlier line "AI-powered shopping, on your terms" is retired.
+
 ## Colours
 
 | Colour | Hex | Role |

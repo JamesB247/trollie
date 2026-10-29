@@ -1,5 +1,8 @@
 # Trollie
 
+> **Your list. Taken care of.** The whole shop, one honest total, nothing bought until you say yes.
+> (Customer positioning: [`docs/POSITIONING.md`](docs/POSITIONING.md).)
+
 Multi-retailer purchasing and fulfilment for South African households: one list → a complete,
 fulfilable basket from at most two stores → explicit, passkey-bound approval of an immutable
 quote → orders placed with each store → deliveries coordinated → ledger reconciled.

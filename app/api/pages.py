@@ -43,7 +43,12 @@ h1{font-size:1.3rem;margin:.2rem 0 1rem;color:var(--evergreen)}
 font-size:1rem;border:0;border-radius:10px;background:var(--evergreen);color:var(--cream)}
 button.secondary{background:transparent;color:var(--evergreen);border:1px solid var(--evergreen)}
 ul{padding-left:1.1rem;margin:.3rem 0}#msg{margin-top:10px;font-weight:600}
+.tagline{color:var(--muted);font-size:.85rem;margin:-8px 0 12px}.tagline b{color:var(--evergreen)}
 """
+
+# Locked customer positioning (docs/POSITIONING.md, DECISIONS.md I-048).
+TAGLINE = "Your list. Taken care of."
+SUPPORTING_LINE = "The whole shop, one honest total, nothing bought until you say yes."
 
 BRAND_ICON = (
     "data:image/png;base64,"
@@ -153,6 +158,7 @@ def page(title: str, body: str, *, data: str = "") -> HTMLResponse:
         f"<title>{html.escape(title)}</title><link rel='icon' href='{BRAND_ICON}'>"
         f"<style>{STYLE}</style></head>"
         f"<body {data}><main><div class='brand'><img src='{BRAND_ICON}' alt=''>trollie</div>"
+        f"<div class='tagline'><b>{TAGLINE}</b> {SUPPORTING_LINE}</div>"
         f"<div class='banner'>SIMULATED — NOT REAL MONEY. Fictional stores."
         f"</div>{body}<div id='msg' role='status'></div></main><script>{SCRIPT}</script>"
         f"</body></html>"
@@ -220,6 +226,8 @@ def approve_quote(
         f"<span>{money(snap['maximum_payable_minor'])}</span></div>"
         f"<div class='muted'>Delivering to {e(dest['label'])} (address version {dest['version']})"
         f" · paying with {e(funding_label(snap['funding_source']))}</div></div>"
+        f"<div class='card'><b>Nothing is bought until you say yes.</b> The total above includes "
+        f"shop prices, delivery and our fee; it is the most you will pay.</div>"
         f"<div class='card muted'>{policy_text} Separate stores cannot give one all-or-nothing "
         f"transaction; if a store fails after paying we handle the cancellation or refund and "
         f"show its progress.</div>"
