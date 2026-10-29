@@ -5,6 +5,12 @@ phasing and parts of DECISIONS.md (the wallet, the multi-retailer funds flow). R
 29 October 2026; not legal advice. Every "probably" below needs confirmation from a South
 African payments lawyer before money moves.
 
+Founders' direction, 29 October 2026: **the original plan stays** (retailers join the
+platform and sell through it; the wallet follows later). Own dark stores are not being
+pursued. To launch quickly, Trollie would first run a **concierge reseller phase**
+(structure B, described under "Phase 0" below) and move each retailer to a direct
+integration as agreements are signed.
+
 ## The question
 
 Can Trollie launch agent-led buying (chat, voice, a photo or a description, then a shopping
@@ -92,6 +98,87 @@ balance falls under the SARB's e-money position was not confirmed and needs coun
   purchasing with price movement between quote and purchase, can be added to the crowd
   market to test margin risk and stock-outs.
 
+## Phase 0: concierge reseller (founders' direction, 29 October 2026)
+
+Trollie buys groceries from existing retailers and sells them to the customer at Trollie's own
+price, until retailers sign up. OneCart ran this model in South Africa: its personal shoppers
+picked orders off partner retailers' shelves, paid at the till, and its drivers delivered,
+for a 5–7% service fee.
+
+**Decided by the founders**
+
+| Topic | Decision |
+|---|---|
+| Payment | The customer pays Trollie in full first, into Trollie's own account. Trollie buys nothing until the payment is confirmed. |
+| Problems | Trollie refunds the customer first, then takes the problem up with the retailer or courier. |
+| After delivery | The sale is final: no change-of-mind returns or changes. |
+| Price changes | Trollie absorbs them. The customer pays the quoted price. Prices must be updated quickly. |
+| Substitutions | The customer sets substitution preferences when ordering. |
+| VAT | Handled as normal business. |
+| Retailer agreements | The founders are pursuing them. Full automation is the long-term aim. |
+
+**Consequences for the design**
+
+- **Wording makes Trollie the seller.** Quotes, terms and receipts say "Trollie's price for
+  this basket, delivered". They never say "the retailer's price plus a fee", and never call
+  Trollie "your agent paying the retailer". That keeps Phase 0 in structure B and out of
+  third-party payments. It also means Trollie keeps any saving when the till price is lower,
+  which an agent would have to pass back. Counsel to confirm (question 1 below).
+- **The quoted price binds Trollie anyway.** CPA s23(6) bars a supplier from charging more
+  than the displayed price, apart from obvious errors that are corrected and disclosed. So
+  "price changes are on us" is also the legal position.
+- **"Final once delivered" covers change of mind only.**
+  - ECTA s42(2)(c) excludes everyday foodstuffs and beverages delivered to the home from the
+    s44 cooling-off right, so change-of-mind returns can be refused for groceries.
+  - Wrong, missing, damaged or expired items cannot be refused. Goods are at the supplier's
+    risk until delivery (CPA s19). Defective goods may be returned within six months for
+    repair, replacement or refund (CPA s56(2)).
+  - Non-grocery lines (furniture, electronics) do get the seven-day cooling-off.
+  - Terms should say: "no returns for change of mind; wrong, damaged or missing items are
+    refunded".
+- **Settlement method.**
+  - Instant EFT or PayShap into Trollie's account cannot be charged back.
+  - Card payments can still be disputed with the customer's bank whatever the terms say, so
+    keep delivery evidence (proof of delivery, photo, OTP).
+- **Substitution default.** Each item carries a preference:
+  1. exact item only;
+  2. similar item, same size, at no more than the quoted line price;
+  3. shopper's choice.
+
+  If the customer sets nothing, the default is option 2 (to be confirmed by the founders). A
+  substitute never raises what the customer pays; a dearer one is Trollie's cost. A missing
+  item with no acceptable substitute is refunded automatically.
+- **Prices without scraping.**
+  - Every completed purchase's receipt is a fresh, exact price observation for that store;
+    that becomes the main price feed.
+  - Staff check the weekly specials.
+  - Lines not seen recently are quoted with a wider buffer or checked before the quote.
+  - The gap between quoted and paid prices is booked as purchase-price variance, so
+    pricing error shows up per retailer per week.
+- **Placing the retailer order.** Phase 0 uses people: in-store pickers, or staff placing an
+  agent-prepared order through a business account.
+  - Automated ordering through retailers' consumer apps is not planned. The retailers'
+    terms seen so far restrict automated access and limit some accounts to personal use, so
+    accounts can be closed with paid orders in flight.
+  - Each retailer moves to an automated channel only through an agreement (an API or an
+    order feed).
+- **System fit.** A retailer in Phase 0 becomes a "concierge" merchant adapter, where
+  pricing, placement and receipt capture are tasks for a person, and the retailer's order
+  number and tax invoice are stored as evidence. Quotes, approval, the pay-first rail,
+  refunds, the ledger and reconciliation are unchanged. When an agreement is signed, the
+  adapter is replaced and nothing else moves. The ledger gains accounts for stock purchased
+  for resale and purchase-price variance; the wallet stays off.
+
+**Still open**
+
+- The default substitution rule.
+- Minimum basket or minimum fee. Small baskets lose money once picker time, delivery and
+  payment fees are counted.
+- The service premium.
+- Which retailers and which area to start in.
+- Whether OneCart had formal agreements with every store it shopped at. It lists them as
+  partner stores; the terms were not public.
+
 ## Questions for counsel
 
 1. Does structure B (Trollie sells at its own price, buys separately from partner retailers)
@@ -123,3 +210,9 @@ balance falls under the SARB's e-money position was not confirmed and needs coun
 - [PMG: NCC reply on prepaid voucher validity](https://pmg.org.za/committee-question/35381/)
 - [ASC Food Safety: Certificate of Acceptability](https://ascfoodsafety.com/certificate-of-acceptability/)
 - [ASC Food Safety: South African food laws](https://ascfoodsafety.com/ultimate-guide-south-african-food-legislation-2026/)
+- [Acts Online: CPA section 23, displayed price](https://www.acts.co.za/consumer-protection/23_disclosure_of_price_of_goods_or_services)
+- [Acts Online: CPA section 56, implied warranty of quality](https://www.acts.co.za/consumer-protection/56_implied_warranty_of_quality)
+- [Michalsons: ECT Act consumer protection, s42(2) exclusions](https://www.michalsons.com/blog/consumer-protection-provisions-of-the-ect-act/2380)
+- [Elluminati: how OneCart works](https://www.elluminatiinc.com/?p=75329)
+- [Checkers Xtra Savings Plus terms (personal use)](https://www.checkers.co.za/terms-and-conditions/legal-terms-and-conditions-xtrasavingsplus)
+- [TechCentral: Pick n Pay partners with Takealot](https://techcentral.co.za/pick-n-pay-partners-with-takealot-in-online-shopping-push/211192/)
