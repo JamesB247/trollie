@@ -178,6 +178,21 @@ def sweep(rt: Runtime) -> int:
         with rt.sessions() as s:
             if s.get(Order, order_id).version != version:
                 changed += 1
+    # A courier booking whose response was lost is looked up (booking is idempotent by
+    # reference) until it is known (blueprint §9.5 "Courier booking response lost"; T40).
+    from app.orders.models import DeliveryJob
+    from app.orders.service import book_delivery
+
+    with rt.sessions() as s:
+        unknown = list(
+            s.scalars(select(DeliveryJob.id).where(DeliveryJob.state == "BOOKING_UNKNOWN"))
+        )
+    for job_id in unknown:
+        try:
+            if book_delivery(rt, job_id) != "BOOKING_UNKNOWN":
+                changed += 1
+        except Exception:  # noqa: BLE001
+            log.exception("sweep: delivery %s could not be looked up", job_id)
     with rt.sessions() as s:
         open_refunds = [
             (r.id, r.operation_id, r.state)

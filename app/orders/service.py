@@ -14,6 +14,7 @@ supplied within the approved conditions.
 """
 
 import uuid
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import select, text
@@ -483,6 +484,9 @@ def _resecure_supply(rt: Runtime, order_id: uuid.UUID, leg_ids: list[str]) -> bo
     return True
 
 
+LATE_EVIDENCE = timedelta(minutes=2)
+
+
 def _payment_pending(rt: Runtime, order_id: uuid.UUID) -> bool:
     with rt.sessions() as s:
         order = s.get(Order, order_id)
@@ -495,7 +499,13 @@ def _payment_pending(rt: Runtime, order_id: uuid.UUID) -> bool:
             _release_all(rt, order_id)
             _set_state(rt, order_id, "CANCELLED", reason="cancelled_before_payment")
             return True
-        return False  # waiting for the customer; a live payment attempt is never abandoned
+        # Waiting for the customer; a live payment attempt is never abandoned. If no result
+        # has arrived for a while, ask the provider (same key) instead of trusting that a
+        # webhook will come: the crowd simulation saw customers charged while their orders
+        # sat in PAYMENT_PENDING behind a late webhook.
+        if op.submitted_at and op.submitted_at + LATE_EVIDENCE < rt.clock.now():
+            return rt.executor.reconcile(op.id).state != op.state
+        return False
     if op.state == OpState.FAILED_FINAL:
         _release_all(rt, order_id)
         _invalidate_quote(rt, order_id)
@@ -744,7 +754,17 @@ def _committing(rt: Runtime, order_id: uuid.UUID) -> bool:
                 parties=removed,
                 reason="permitted_omission",
             )
-    _book_deliveries(rt, order_id, keep)
+    if not _book_deliveries(rt, order_id, keep):
+        # The approved delivery window is gone; another window is a material change that
+        # needs fresh approval, so the paid order is unwound rather than silently moved.
+        _set_state(
+            rt,
+            order_id,
+            "COMPENSATING",
+            reason="delivery_capacity_lost",
+            plan={**plan, "kind": "cancel_all", "reason": "delivery_capacity_lost"},
+        )
+        return True
     _set_state(rt, order_id, "FULFILLING", reason=decision.reason if rejected else None)
     return True
 
@@ -930,16 +950,14 @@ def create_refund(
                     "refund exceeds the remaining refundable amount",
                     refundable=paid.amount_minor - committed,
                 )
+            check_claim_caps(s, order, parties)
             refund = Refund(
                 order_id=order_id,
                 business_key=business_key,
                 original_operation_id=paid.id,
                 reason=reason,
                 amount_minor=amount,
-                economic_allocation=[
-                    {k: p[k] for k in ("party_type", "party_id", "amount_minor", "leg_id")}
-                    for p in parties
-                ],
+                economic_allocation=[{k: p[k] for k in ALLOCATION_KEYS if k in p} for p in parties],
                 destination="original_payment",
             )
             s.add(refund)
@@ -961,6 +979,79 @@ def create_refund(
             refund_id = refund.id
     submit_refund(rt, refund_id)
     return refund_id
+
+
+ALLOCATION_KEYS = ("party_type", "party_id", "amount_minor", "leg_id", "line_id")
+
+
+def check_claim_caps(s: Session, order: Order, parties: list[dict]) -> None:
+    """Refunds attributed to a store leg never exceed that leg's value, and refunds for one
+    line never exceed that line's total, across every claim and both funding routes.
+
+    Found by the crowd simulation: each missing-item claim was checked only against the
+    order total, so the same missing line could be refunded twice and one store's leg could
+    be refunded beyond its value. The caller must hold a lock that serialises refunds for
+    this order (the order row, or the wallet).
+    """
+    from app.wallet.models import WalletRefund
+
+    legs = {
+        leg.leg_id: leg for leg in s.scalars(select(OrderLeg).where(OrderLeg.order_id == order.id))
+    }
+    snapshot = s.get(Quote, order.quote_id).snapshot
+    line_totals = {
+        (leg["leg_id"], ln["line_id"]): ln["line_total_minor"]
+        for leg in snapshot["legs"]
+        for ln in leg["lines"]
+    }
+    prior_leg: dict[str, int] = {}
+    prior_line: dict[tuple[str, str], int] = {}
+    allocations = [
+        r.economic_allocation or []
+        for r in s.scalars(
+            select(Refund).where(
+                Refund.order_id == order.id,
+                Refund.state.not_in([RefundState.REJECTED_WITH_REASON]),
+            )
+        )
+    ] + [
+        r.economic_allocation or []
+        for r in s.scalars(select(WalletRefund).where(WalletRefund.order_id == order.id))
+    ]
+    for allocation in allocations:
+        for part in allocation:
+            if part.get("leg_id"):
+                prior_leg[part["leg_id"]] = prior_leg.get(part["leg_id"], 0) + part["amount_minor"]
+                if part.get("line_id"):
+                    key = (part["leg_id"], part["line_id"])
+                    prior_line[key] = prior_line.get(key, 0) + part["amount_minor"]
+    for part in parties:
+        leg_id = part.get("leg_id")
+        if not leg_id:
+            continue
+        leg = legs.get(leg_id)
+        if leg is None:
+            raise TrollieError(ErrorCode.VALIDATION_FAILED, "unknown leg")
+        cap = leg.goods_minor + leg.delivery_minor
+        if prior_leg.get(leg_id, 0) + part["amount_minor"] > cap:
+            raise TrollieError(
+                ErrorCode.VALIDATION_FAILED,
+                "claim exceeds the remaining value of that store's part of the order",
+                remaining=cap - prior_leg.get(leg_id, 0),
+            )
+        prior_leg[leg_id] = prior_leg.get(leg_id, 0) + part["amount_minor"]
+        line_id = part.get("line_id")
+        if line_id:
+            key = (leg_id, line_id)
+            if key not in line_totals:
+                raise TrollieError(ErrorCode.VALIDATION_FAILED, "unknown line for that leg")
+            if prior_line.get(key, 0) + part["amount_minor"] > line_totals[key]:
+                raise TrollieError(
+                    ErrorCode.VALIDATION_FAILED,
+                    "that item has already been refunded",
+                    remaining=line_totals[key] - prior_line.get(key, 0),
+                )
+            prior_line[key] = prior_line.get(key, 0) + part["amount_minor"]
 
 
 def _hold_if_disputed(rt: Runtime, order_id: uuid.UUID, business_key: str, amount: int) -> None:
@@ -1009,20 +1100,33 @@ def submit_refund(rt: Runtime, refund_id: uuid.UUID) -> None:
 # --- Delivery ------------------------------------------------------------------------
 
 
-def _book_deliveries(rt: Runtime, order_id: uuid.UUID, leg_ids: set[str]) -> None:
+def _book_deliveries(rt: Runtime, order_id: uuid.UUID, leg_ids: set[str]) -> bool:
+    """Take the approved courier slots. Returns False, booking nothing, if a slot filled up
+    after the quote: capacity is observed at quote time, not held (crowd simulation found
+    the resulting overbooking crashed every retry of a paid order). Slots are locked in id
+    order so two orders sharing slots cannot deadlock."""
     with rt.sessions() as s, s.begin():
         order = s.get(Order, order_id)
         snapshot = _snapshot(s, order)
         slots = {leg["leg_id"]: leg["delivery"] for leg in snapshot["legs"]}
-        for leg in _legs(s, order_id):
-            if (
-                leg.leg_id not in leg_ids
-                or s.scalars(select(DeliveryJob).where(DeliveryJob.order_leg_id == leg.id)).first()
-            ):
-                continue
-            slot = s.get(
-                DeliverySlot, uuid.UUID(slots[leg.leg_id]["slot_id"]), with_for_update=True
-            )
+        todo = [
+            leg
+            for leg in _legs(s, order_id)
+            if leg.leg_id in leg_ids
+            and not s.scalars(select(DeliveryJob).where(DeliveryJob.order_leg_id == leg.id)).first()
+        ]
+        need: dict[uuid.UUID, int] = {}
+        for leg in todo:
+            slot_id = uuid.UUID(slots[leg.leg_id]["slot_id"])
+            need[slot_id] = need.get(slot_id, 0) + 1
+        locked = {
+            slot_id: s.get(DeliverySlot, slot_id, with_for_update=True)
+            for slot_id in sorted(need, key=str)
+        }
+        if any(locked[i].booked + n > locked[i].capacity for i, n in need.items()):
+            return False
+        for leg in todo:
+            slot = locked[uuid.UUID(slots[leg.leg_id]["slot_id"])]
             slot.booked += 1
             s.add(
                 DeliveryJob(
@@ -1044,6 +1148,7 @@ def _book_deliveries(rt: Runtime, order_id: uuid.UUID, leg_ids: set[str]) -> Non
         ]
     for job_id in jobs:
         book_delivery(rt, job_id)
+    return True
 
 
 def book_delivery(rt: Runtime, job_id: uuid.UUID) -> str:
@@ -1078,7 +1183,24 @@ def book_delivery(rt: Runtime, job_id: uuid.UUID) -> str:
             DELIVERY.move(job, "BOOKED")
             job.courier_ref = obs["courier_ref"]
         else:
+            # Rebooking another slot would be a later window, which needs fresh approval
+            # (CLAUDE.md rules), so the order is flagged for a person instead of silently
+            # waiting for a courier that will never come.
             DELIVERY.move(job, "FAILED")
+            leg = s.get(OrderLeg, job.order_leg_id)
+            order = s.get(Order, leg.order_id, with_for_update=True)
+            order.attention_reason = "courier_booking_failed"
+            _incident(s, "courier_booking_failed", job_id=job.id, order_id=order.id)
+            from app.reconciliation.service import open_case
+
+            open_case(
+                s,
+                dedupe_key=f"courier-booking-failed:{job.id}",
+                case_type="courier_booking_failed",
+                refs={"order_id": str(order.id), "leg_id": leg.leg_id, "job_id": str(job.id)},
+                difference_minor=leg.goods_minor + leg.delivery_minor,
+                owner="support",
+            )
         return job.state
 
 
@@ -1114,10 +1236,23 @@ def merchant_ready(rt: Runtime, *, leg_id: uuid.UUID) -> None:
             LEG.move(leg, "READY_FOR_COLLECTION")
 
 
+DRIVER_UPDATABLE = {"BOOKED", "COLLECTING", "IN_TRANSIT"}
+
+
 def courier_progress(rt: Runtime, *, job_id: uuid.UUID, to: str) -> None:
     """Driver-side updates: collected | delivered | failed."""
     with rt.sessions() as s:
         job = s.get(DeliveryJob, job_id)
+        if job is None:
+            raise TrollieError(ErrorCode.NOT_FOUND, "delivery job not found")
+        if job.state not in DRIVER_UPDATABLE:
+            # A driver update for a booking that was never confirmed (unknown, rejected or
+            # cancelled) is refused; it must not move the leg or touch the courier record.
+            raise TrollieError(
+                ErrorCode.INVALID_STATE_TRANSITION,
+                f"delivery {job.state}: no confirmed courier booking to update",
+                current=job.state,
+            )
         ref = job.booking_ref
     rt.courier.advance(booking_ref=ref, to=to)
     with rt.sessions() as s, s.begin():
@@ -1135,6 +1270,21 @@ def courier_progress(rt: Runtime, *, job_id: uuid.UUID, to: str) -> None:
             DELIVERY.move(job, "FAILED")
             LEG.move(leg, "FAILED")
             _incident(s, "delivery_failed", job_id=job.id)
+            # Blueprint §9.5 "Courier fails after collection": Trollie owns the support case.
+            # The remedy (redelivery, refund, liability) is a person's decision until D05 is
+            # settled; the customer's status says so instead of showing "fulfilling" forever.
+            from app.reconciliation.service import open_case
+
+            order = s.get(Order, leg.order_id, with_for_update=True)
+            order.attention_reason = "delivery_failed_support_case_open"
+            open_case(
+                s,
+                dedupe_key=f"delivery-failed:{job.id}",
+                case_type="delivery_failed",
+                refs={"order_id": str(order.id), "leg_id": leg.leg_id, "job_id": str(job.id)},
+                difference_minor=leg.goods_minor + leg.delivery_minor,
+                owner="support",
+            )
         order_id = leg.order_id
     advance(rt, order_id)
 

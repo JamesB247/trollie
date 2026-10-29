@@ -16,7 +16,12 @@ from app.ledger.models import LedgerTransaction
 from app.merchants.models import Reservation, ReservationState
 from app.orders.handlers import pump
 from app.orders.models import DeliveryJob, Order, OrderLeg
-from app.orders.service import create_order, redirect_delivery, request_cancellation
+from app.orders.service import (
+    courier_progress,
+    create_order,
+    redirect_delivery,
+    request_cancellation,
+)
 from app.orders.status import order_status
 from app.payments.models import FinancialOperation, OpState, Refund
 from app.quotes.models import FulfilmentMode
@@ -401,6 +406,117 @@ def test_t40_courier_booking_timeout_looks_up_not_rebooks(rt, db, split_world):
             db.scalar(select(func.count()).where(SimCourierBooking.booking_ref == j.booking_ref))
             == 1
         )
+
+
+def _jobs(db, order_id):
+    return [
+        db.scalars(select(DeliveryJob).where(DeliveryJob.order_leg_id == leg.id)).one()
+        for leg in legs(db, order_id).values()
+    ]
+
+
+def test_t40_booking_unknown_is_resolved_by_the_sweep(rt, db, split_world):
+    """Found by the crowd simulation: a booking whose response and lookup were both lost
+    stayed BOOKING_UNKNOWN forever. The sweep now looks it up again (no second booking)."""
+    fault(db, "courier", "book", "book", "timeout_before_effect", times=2)
+    p = purchase(rt, db, split_world, funding=CARD)
+    pay(rt, p.checkout_ref)  # pumps until quiet, which includes the reconciliation sweep
+    db.expire_all()
+    for j in _jobs(db, p.order_id):
+        assert j.state == "BOOKED"
+        assert (
+            db.scalar(select(func.count()).where(SimCourierBooking.booking_ref == j.booking_ref))
+            == 1
+        )
+
+
+def test_rejected_courier_booking_flags_the_order_and_refuses_driver_updates(rt, db, split_world):
+    """Found by the crowd simulation: a rejected booking left a paid order waiting silently,
+    and a driver update for it crashed with a server error."""
+    fault(db, "courier", "book", "book", "reject")
+    p = purchase(rt, db, split_world, funding=CARD)
+    pay(rt, p.checkout_ref)
+    db.expire_all()
+    failed = [j for j in _jobs(db, p.order_id) if j.state == "FAILED"]
+    assert len(failed) == 1
+    assert db.get(Order, p.order_id).attention_reason == "courier_booking_failed"
+    assert db.scalar(
+        select(func.count()).where(
+            Incident.kind == "courier_booking_failed",
+            Incident.details["order_id"].astext == str(p.order_id),
+        )
+    )
+    with pytest.raises(TrollieError) as err:
+        courier_progress(rt, job_id=failed[0].id, to="collected")
+    assert err.value.code is ErrorCode.INVALID_STATE_TRANSITION
+
+
+def test_courier_failure_after_collection_opens_support_case(rt, db, split_world):
+    """Crowd simulation: a failed delivery left a paid order 'fulfilling' forever with no
+    owner. Blueprint §9.5: Trollie owns the support case."""
+    from app.orders.service import merchant_ready
+
+    p = purchase(rt, db, split_world, funding=CARD)
+    pay(rt, p.checkout_ref)
+    leg = next(iter(legs(db, p.order_id).values()))
+    job = db.scalars(select(DeliveryJob).where(DeliveryJob.order_leg_id == leg.id)).one()
+    merchant_ready(rt, leg_id=leg.id)
+    courier_progress(rt, job_id=job.id, to="collected")
+    courier_progress(rt, job_id=job.id, to="failed")
+    db.expire_all()
+    assert db.get(Order, p.order_id).attention_reason == "delivery_failed_support_case_open"
+    case = db.scalars(
+        select(ReconciliationCase).where(
+            ReconciliationCase.dedupe_key == f"delivery-failed:{job.id}"
+        )
+    ).one()
+    assert case.owner == "support" and case.difference_minor == leg.goods_minor + leg.delivery_minor
+    status = order_status(db, p.order_id, p.customer.account_id)
+    assert status["reason"] == "delivery_failed_support_case_open"
+
+
+@pytest.mark.parametrize("funding", [CARD, INSTANT])
+def test_delivery_slot_filled_after_quote_unwinds_paid_order(rt, db, split_world, funding):
+    """Crowd simulation: courier capacity is observed at quote time, not held. When a slot
+    filled before commit, booking crashed on every retry and the paid order hung in
+    COMMITTING. Now the order is unwound and the customer's money returned."""
+    from app.delivery.models import DeliverySlot
+
+    p = purchase(rt, db, split_world, funding=funding)
+    for leg in p.quote.snapshot["legs"]:
+        slot = db.get(DeliverySlot, uuid.UUID(leg["delivery"]["slot_id"]), with_for_update=True)
+        slot.booked = slot.capacity  # other shoppers took the last places
+    db.commit()
+    pay(rt, p.checkout_ref)
+    db.expire_all()
+    order = db.get(Order, p.order_id)
+    assert order.state == "CANCELLED"
+    assert order.attention_reason == "delivery_capacity_lost"
+    assert not db.scalars(
+        select(DeliveryJob)
+        .join(OrderLeg, OrderLeg.id == DeliveryJob.order_leg_id)
+        .where(OrderLeg.order_id == p.order_id)
+    ).first()
+    money = order_status(db, p.order_id, p.customer.account_id)["money"]
+    returned = money["refund_requested_minor"] + money["refund_confirmed_minor"]
+    assert money["charged_minor"] == 0 or returned == money["charged_minor"]
+
+
+def test_late_webhook_is_resolved_by_lookup(rt, db, split_world, clock):
+    """Crowd simulation: with a late webhook the customer was charged while the order sat in
+    PAYMENT_PENDING. After two quiet minutes Trollie now asks the provider."""
+    from app.orders.handlers import sweep
+
+    fault(db, "payment", "customer_completes", "customer_completes", "delay_webhook")
+    p = purchase(rt, db, split_world, funding=INSTANT)
+    pay(rt, p.checkout_ref)
+    db.expire_all()
+    assert db.get(Order, p.order_id).state == "PAYMENT_PENDING"
+    clock.advance(minutes=3)
+    sweep(rt)
+    pump(rt, rt.payments)
+    db.expire_all()
+    assert db.get(Order, p.order_id).state == "FULFILLING"
 
 
 def test_t42_delivery_to_unapproved_address_rejected(rt, db, split_world):

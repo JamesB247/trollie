@@ -29,7 +29,8 @@ router = APIRouter(prefix="/v1/dev", tags=["dev"])
 
 class AccountIn(Strict):
     display_name: str = "Demo Household (Fictional)"
-    zone: Literal["zone-a", "zone-b"] = "zone-a"
+    # Any delivery zone the seeded data serves (zone-a/zone-b, or a market zone).
+    zone: str = Field(default="zone-a", pattern=r"^[a-z0-9-]{1,40}$")
     address_text: str = "1 Fictional Lane, Synthetic Township"
 
 
@@ -40,7 +41,7 @@ class CompleteIn(Strict):
 class TransferIn(Strict):
     transfer_ref: str
     reference: str
-    amount_minor: int = Field(gt=0)
+    amount_minor: int = Field(gt=0, le=10**12)
     status: Literal["confirmed", "pending", "failed", "reversed"] = "confirmed"
     currency: str = "ZAR"
     destination_account: str = COLLECTION_ACCOUNT
@@ -56,11 +57,15 @@ class FaultIn(Strict):
 
 
 @router.post("/seed")
-def dev_seed(c: AppContext = Depends(dev_only)):
+def dev_seed(market: bool = False, c: AppContext = Depends(dev_only)):
+    """Seed the base fixture; with `market=true`, also the multi-region crowd market."""
+    from app.simulators.market import seed_market
     from app.simulators.merchant import restock
 
     with c.rt.sessions() as s, s.begin():
         ids = seed(s, now=c.rt.clock.now())
+        if market:
+            ids |= seed_market(s, now=c.rt.clock.now())
         restocked = restock(s)
     return {
         "merchants": sorted(k for k in ids if k.startswith("merchant:")),

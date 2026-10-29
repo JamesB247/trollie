@@ -460,6 +460,10 @@ def refund_to_wallet(
             "refund exceeds the remaining refundable amount",
             refundable=res.amount_minor - int(already),
         )
+    from app.orders.models import Order
+    from app.orders.service import check_claim_caps
+
+    check_claim_caps(s, s.get(Order, order_id), parties)  # serialised by the wallet lock
     envelope = s.get(Envelope, res.envelope_id) if res.envelope_id else None
     to_envelope = envelope is not None and envelope.status == "active" and grant_active
     destination_acct = (
@@ -471,7 +475,12 @@ def refund_to_wallet(
         amount_minor=amount,
         destination=f"envelope:{envelope.id}" if to_envelope else "unallocated",
         economic_allocation=[
-            {k: p[k] for k in ("party_type", "party_id", "amount_minor")} for p in parties
+            {
+                k: p[k]
+                for k in ("party_type", "party_id", "amount_minor", "leg_id", "line_id")
+                if k in p
+            }
+            for p in parties
         ],
     )
     s.add(refund)

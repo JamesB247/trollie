@@ -429,7 +429,8 @@ def test_t43_damaged_item_issue_becomes_targeted_refund(api, catalogue):
     ref = user.call("POST", f"/v1/orders/{order_id}/checkout-sessions").json()["checkout_ref"]
     api.post(f"/v1/dev/sim/checkouts/{ref}/complete", json={})
     key = str(uuid.uuid4())
-    body = {"leg_id": "leg_1", "amount_minor": 1500, "reason": "damaged"}
+    line_id = quote["legs"][0]["lines"][0]["line_id"]
+    body = {"leg_id": "leg_1", "line_id": line_id, "amount_minor": 1500, "reason": "damaged"}
     first = user.call(
         "POST", f"/v1/orders/{order_id}/issues", json=body, headers={"Idempotency-Key": key}
     )
@@ -439,3 +440,65 @@ def test_t43_damaged_item_issue_becomes_targeted_refund(api, catalogue):
     assert first.status_code == 202 and first.json()["refund_id"] == again.json()["refund_id"]
     money = user.call("GET", f"/v1/orders/{order_id}").json()["money"]
     assert money["refund_requested_minor"] + money["refund_confirmed_minor"] == 1500
+
+
+def test_repeat_and_over_leg_claims_refused(api, catalogue):
+    """Crowd simulation breach: the same missing line was refunded twice with fresh keys,
+    and claims on one store leg could exceed that leg's value."""
+    user = User(api)
+    quote = firm_quote(user, basket(user, catalogue, items=(("tea-100", 1),)))
+    user.register_passkey()
+    approval_id = user.approve("quote", quote["quote_id"])
+    order_id = user.call(
+        "POST",
+        "/v1/orders",
+        json={"approval_id": approval_id},
+        headers={"Idempotency-Key": str(uuid.uuid4())},
+    ).json()["order_id"]
+    ref = user.call("POST", f"/v1/orders/{order_id}/checkout-sessions").json()["checkout_ref"]
+    api.post(f"/v1/dev/sim/checkouts/{ref}/complete", json={})
+    leg = quote["legs"][0]
+    line = leg["lines"][0]
+
+    def claim(**body):
+        return user.call(
+            "POST",
+            f"/v1/orders/{order_id}/issues",
+            json={"leg_id": leg["leg_id"], "reason": "missing_item", **body},
+            headers={"Idempotency-Key": str(uuid.uuid4())},
+        )
+
+    whole_line = {"line_id": line["line_id"], "amount_minor": line["line_total_minor"]}
+    assert claim(**whole_line).status_code == 202
+    again = claim(**whole_line)
+    assert again.status_code == 422 and again.json()["code"] == "VALIDATION_FAILED"
+    leg_value = leg["goods_minor"] + leg["delivery_fee_minor"]
+    assert claim(amount_minor=1).status_code == 422  # a claim must name the item
+    over = claim(line_id=line["line_id"], amount_minor=leg_value)
+    assert over.status_code == 422
+    money = user.call("GET", f"/v1/orders/{order_id}").json()["money"]
+    assert (
+        money["refund_requested_minor"] + money["refund_confirmed_minor"]
+        == line["line_total_minor"]
+    )
+
+
+def test_absurd_numbers_are_validation_errors_not_server_errors(api, catalogue):
+    """Crowd simulation: 10**30 packs and a 10**19-cent top-up reached the database."""
+    user = User(api)
+    sid = user.call(
+        "POST", "/v1/shopping-sessions", json={"address_version_id": user.address}
+    ).json()["session_id"]
+    item = user.call(
+        "POST",
+        f"/v1/shopping-sessions/{sid}/items",
+        json={
+            "line_id": "lots",
+            "candidates": [{"product_id": str(catalogue["product:tea-100"])}],
+            "quantity": {"packs": 10**30},
+        },
+    )
+    assert item.status_code == 422
+    user.call("POST", "/v1/wallet")
+    top = user.call("POST", "/v1/wallet/topups", json={"amount_minor": 10**19})
+    assert top.status_code == 422

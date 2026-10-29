@@ -12,21 +12,28 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+# Upper bounds on caller-supplied numbers. Without them an absurd value (10**30 packs) reached
+# the database and failed as a server error instead of a validation error (crowd simulation).
+MAX_MINOR = 100_000_000  # R1 000 000 per amount in this sandbox
+MAX_PACKS = 1_000
+MAX_MEASURE = 1_000_000  # 1 000 kg / 1 000 l / 1 000 000 units
+
+
 class SessionIn(Strict):
     address_version_id: uuid.UUID
-    budget_minor: int | None = Field(default=None, gt=0)
+    budget_minor: int | None = Field(default=None, gt=0, le=MAX_MINOR)
     deadline: datetime | None = None
 
 
 class CandidateIn(Strict):
     product_id: uuid.UUID
-    rank: int = Field(default=0, ge=0)
-    max_unit_price_minor: int | None = Field(default=None, gt=0)
+    rank: int = Field(default=0, ge=0, le=100)
+    max_unit_price_minor: int | None = Field(default=None, gt=0, le=MAX_MINOR)
 
 
 class QuantityIn(Strict):
-    packs: int | None = Field(default=None, gt=0)
-    measure: int | None = Field(default=None, gt=0)
+    packs: int | None = Field(default=None, gt=0, le=MAX_PACKS)
+    measure: int | None = Field(default=None, gt=0, le=MAX_MEASURE)
     unit: Literal["ml", "g", "each"] | None = None
 
 
@@ -73,13 +80,16 @@ class OrderIn(Strict):
 
 
 class IssueIn(Strict):
-    leg_id: str
-    amount_minor: int = Field(gt=0)
+    leg_id: str = Field(max_length=64)
+    # Every claim reason is about an item, so the claim names its quote line; a line can
+    # never be refunded beyond its total (crowd simulation: repeat claims for one item).
+    line_id: str = Field(min_length=1, max_length=64)
+    amount_minor: int = Field(gt=0, le=MAX_MINOR)
     reason: Literal["missing_item", "damaged", "wrong_item"]
 
 
 class AmountIn(Strict):
-    amount_minor: int = Field(gt=0)
+    amount_minor: int = Field(gt=0, le=MAX_MINOR)
 
 
 class AgentIn(Strict):
@@ -89,8 +99,8 @@ class AgentIn(Strict):
 class GrantIn(Strict):
     approval_mode: Literal["per_quote", "mandate"]
     address_version_id: uuid.UUID
-    per_order_cap_minor: int = Field(gt=0)
-    period_cap_minor: int = Field(gt=0)
+    per_order_cap_minor: int = Field(gt=0, le=MAX_MINOR)
+    period_cap_minor: int = Field(gt=0, le=MAX_MINOR)
     period_days: int = Field(default=7, gt=0, le=31)
     max_orders_per_day: int = Field(default=3, gt=0, le=20)
     valid_days: int = Field(default=30, gt=0, le=90)

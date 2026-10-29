@@ -415,6 +415,7 @@ def issue(
             "party_id": leg["merchant_id"],
             "amount_minor": body.amount_minor,
             "leg_id": body.leg_id,
+            "line_id": body.line_id,
         }
     ]
     key = f"issue:{order_id}:{idempotency_key}"
