@@ -22,6 +22,51 @@ We don't lead with "AI". Most South Africans aren't familiar with the term (sect
 
 ---
 
+## 1a. What we heard: the founder's summary of the voice note
+
+After listening again, the founder summarised it like this:
+
+1. **I can buy everything I need** in one app.
+2. **It learns about me:** "You bought this 30 days ago, do you want it again?"
+3. **Diet changes:** "I'm going on a diet." It finds substitutes, such as different creams and milks.
+4. **Regular meals:** I cook certain meals on Sundays. It learns that, makes suggestions, gets the ingredients and reminds me what to do (for example, "marinate the lamb tonight").
+5. **Save a meal and cook it one day:** scan a meal, get the recipe and the ingredients. "If you're feeling down and want a healthy soup, it can do it for you." The reference is **ReciMe** (recime.app), which the partner pays for every year. It saves recipes from TikTok, Instagram, Facebook, Pinterest, YouTube and photos of handwritten recipes, plans meals and builds aisle-sorted lists. It has over 15 million users; the free version allows 5 imports a week.
+6. **Saves for me:** rewards, savings, and clear costs.
+7. **Specials for the month and the week:** did Walmart, Shoprite or Pick n Pay run one? It works out **which shops in my area** have something special for me. *Example: Fourways Mall has several retailers under one roof.*
+8. **Bundled weekly and monthly buys.** It hunts for sales and helps me save.
+9. **Seasonal:** sales and suggestions that change with the seasons.
+10. **No pop-ups, no annoying notifications.**
+
+**The founders' conclusion:** make it a **fun app** where people can buy, plan and connect it to the AI agents they already use. In effect, **a personal agent for food and seasonal living.**
+
+---
+
+## 1b. The product: your personal food agent
+
+One sentence: **"Trollie knows what your family eats, plans it with you, finds the best deals at the shops near you, and buys only when you say yes."**
+
+| Pillar | What the customer sees | From the list above | Already built? |
+|---|---|---|---|
+| **Knows you** | Your usual order, your brands, "you usually run out of rice around now", favourites ("that wine you liked"), diet goals | 1, 2, 3 | Partly. The preference rules (locked / preferred / flexible brands) are built. Learning from purchase history is not |
+| **Plans with you** | Sunday menu, saved recipes from TikTok/Instagram/photos, "cook this one day", a healthy soup on a bad day, Saturday reminders | 4, 5 | No. New module (ReciMe-style recipe saving plus a meal planner) |
+| **Saves for you** | Specials this week and month at the shops near you, the cheapest complete order, mall bundles (several shops, one trip or delivery), seasonal deals, "you saved R__ this month" | 6, 7, 8, 9 | Partly. The engine that finds the cheapest complete basket across up to two shops (including promotions and delivery cost) is built. Area and mall discovery, a specials feed and a savings tracker are not |
+| **Asks before buying** | One total, delivery included. Approve with a tap or fingerprint. Nothing changes without asking | (trust) | Yes. Quotes, approval and refusing double charges are built and tested |
+| **Quiet by default** | Only "ready to approve", "on its way" and at most one helpful nudge a week | 10 | Design rule, not yet built |
+| **Works with your agents** | Connect ChatGPT, Claude, Grok or Muse; they can plan and propose, but you approve | (founders) | Partly. The agent can propose but can never approve, and that is already enforced |
+
+**What makes it "fun", not just useful:**
+- a monthly savings card ("You saved R312 in October"), shareable;
+- seasonal collections (winter soups, braai season, back-to-school, festive season);
+- a family Sunday menu everyone can add to;
+- streaks for "no wasted food this week";
+- favourites and "tried it, loved it" ratings.
+
+Keep it light: no games that push people to spend.
+
+**Honest constraint:** the "specials at Walmart vs Shoprite vs Pick n Pay near me" pillar needs **price and specials data from each retailer**. Without agreements, the only lawful sources are each retailer's public catalogues and flyers, entered or partnered for. We should not scrape retailer apps (see `LAUNCH_STRUCTURE_INVESTIGATION.md`). Getting this data is the first business task, before it becomes an engineering one.
+
+---
+
 ## 2. What the partner asked for, and who already does it
 
 The partner's voice note (7 min 52 s) listed what would make them use the app. In 2026 the three big grocers each launched their own AI assistant:
@@ -200,7 +245,7 @@ This is already how the engine works: the customer can lock a brand as a must-ha
 3. **A household list that remembers our brands and our usual order.** Partly built (the preference rules).
 4. **An honest "you saved" figure on every order.** To build.
 5. **Voice notes in home languages.** Planned; no retailer assistant does South African languages well yet.
-6. **Meal plans, recipes, reminders, favourites.** Worth having, but retailers already offer these. Build after 1–5.
+6. **Meal plans, recipes (ReciMe-style saving), reminders, favourites and seasons.** These make Trollie a *personal food agent*, not just a checkout, and they are what makes the app fun to open every week. Retailers offer them inside their own stores. Ours connect to cross-shop savings: *"this week's Sunday lamb is cheapest at Walmart, the veg at Checkers, both in Fourways Mall."* Build them on top of 1–5, not instead of them.
 7. **Few, useful notifications.** Design rule from day one.
 
 **The difficult part, which the founders need to decide.** The partner's best idea (Woolies rice against Checkers rice) only works if Trollie can buy from **more than one retail group**. The ShopriteX pilot is **Shoprite Group only**, and Shoprite already has Pixie. So in the pilot, the consumer story is thinner:
@@ -285,4 +330,4 @@ The question to answer: **would they pay a fee for the saving, and how much?**
 - Airship 2025 Push Notification Benchmarks.
 - CleverTap, January 2025.
 
-*Not verified, or no South African data found:* a South African mental-load study; how many grocery stokvels there are; Sixty60's total user count; which recipe apps South Africans pay for every year; how often people want notifications in South Africa.
+*Not verified, or no South African data found:* a South African mental-load study; how many grocery stokvels there are; Sixty60's total user count; ReciMe's South African user numbers and price (the partner pays yearly; recime.app lists only the free limit of 5 imports a week); how often people want notifications in South Africa.
