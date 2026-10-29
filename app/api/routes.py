@@ -478,6 +478,10 @@ def _check_not_delivered(s: Session, order: Order, leg_id: str, now) -> None:
     ).one()
     if leg.state == "DELIVERED":
         raise TrollieError(ErrorCode.INVALID_STATE_TRANSITION, "the courier recorded delivery")
+    if leg.state == "FAILED":
+        # The courier reported the delivery failed: the customer is made whole now and the
+        # liability between merchant and courier is settled on the support case (D05).
+        return
     if collected(s, leg) or leg.state == "COLLECTED":
         raise TrollieError(
             ErrorCode.INVALID_STATE_TRANSITION,

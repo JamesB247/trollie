@@ -160,3 +160,56 @@ Real merchant, bank, provider and courier behaviour; real prices and demand; how
 (or real models) phrase requests; performance at production scale (one process, one
 database, 60 users: p95 latency 86-176 ms). The Claude-driven brain is built but was not run
 here (no API key in this environment).
+
+## Round 2, 29 October 2026: catalogue scale, scams, stolen money, hijacked agents
+
+```bash
+uv run python -m scripts.crowd.run --spawn-server --users 60 --minutes 20 --market large
+```
+
+**Market** (`app/simulators/bigmarket.py`, I-043): about 63 000 generated products.
+Ubuntu Hypermarket carries 50 000 lines with a slow, flaky integration (2.5 s average, 15%
+of calls 9 s, 6 s timeout). Zest Express carries 20 000, answers instantly, and its
+couriers are often late. Fairbasket carries 18 000 and behaves well. Kaya Living sells
+furniture and appliances: new, legitimate, multi-day delivery. BargainBox Direct is the
+scam: it got past onboarding with forged documents, sells about 750 popular lines 25% under
+market, accepts every order and never hands anything to a courier. A 20-minute run is one
+compressed shopping day. Shoppers arrive in sessions on a South African day curve (lunch
+bump, evening peak); fraudsters and attackers keep night hours.
+
+**New actors**: fraudsters load money stolen from someone else's bank account, buy TVs and
+phones, and try to withdraw before the bank recalls it. Thieves steal a busy parent's
+shopping agent mid-day, then push baskets and urgent "approve now" requests at the owner,
+try to spend without approval, widen the grant and withdraw. Every shopper whose delivery
+window passes with nothing delivered complains ("your bot recommended this store") and
+claims the money back.
+
+### Same crowd, before and after the controls (seed 199673325719780)
+
+| | Before | After |
+|---|---|---|
+| Paid, nothing received after the delivery window | R16 042 | R1 084 (one parcel lost by a courier; fixed after the run) |
+| Paid to the scam store / refunded to its customers | R10 226 / R0 | R4 818 / R4 435 |
+| Scam store at end of day | trading | suspended |
+| Stolen money loaded / spent or withdrawn before recall | R143 678 / R84 829 | R143 678 / R0 |
+| Stolen agents / suspended | 2 / 0 | 2 / 2 |
+| Owners paying for a thief's basket | 0 | 0 (grant caps held in both runs) |
+| Orders placed (honest shoppers) | 80 (58) | 63 (50) |
+| Breaches / server errors | 0 / 0 | 0 / 0 |
+
+Controls added (I-044 to I-047): merchant probation with automatic suspension and refunds,
+an exposure cap on undelivered money at new merchants, re-checking that a merchant still
+trades at firm-up and order time, `not_delivered` claims (only after the window and only if
+the goods never reached a courier; Trollie works out the amount), a clearing period for new
+top-ups with a wallet restriction after a recall, agent strikes and request rate limits,
+and a circuit breaker for stores that keep timing out.
+
+**What it cost honest shoppers**: 21 "money still clearing" refusals and 8 fewer honest
+orders on the after day. The clearing period and allowance are a risk decision for the
+pilot, not an engineering default.
+
+**Still open**: paying a new merchant before delivery is proven (settlement timing is a D02
+provider question); who carries a courier's loss (D05); the hypermarket's slow integration
+still fails most stock holds (32% before, 36% after); the circuit breaker only stops
+offering it while it is failing, so its coverage is lost then too; search at 63 000
+products is literal and roughly 10x slower (p50 92 ms, still fine).

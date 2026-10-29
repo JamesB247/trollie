@@ -360,7 +360,21 @@ def scenario_facts(database_url: str, *, grace_s: float, hijacks: list[tuple[str
                 if o.state in PAID_STATES and any(ln["line_id"].startswith("hj-") for ln in lines):
                     hijack_orders += 1
                     hijack_spend += quotes[o.quote_id].total_minor
-        rep.facts["hijack"] = {"orders": hijack_orders, "spend_minor": hijack_spend}
+        from app.wallet.models import Agent
+
+        suspended = {
+            str(a.account_id)
+            for a in s.scalars(select(Agent).where(Agent.suspended_at.is_not(None)))
+        }
+        rep.facts["hijack"] = {
+            "orders": hijack_orders,
+            "spend_minor": hijack_spend,
+            "stolen_agents": len(hijacks),
+            "stolen_agents_suspended": sum(
+                1 for account_id, _ in hijacks if account_id in suspended
+            ),
+            "agents_suspended": len(suspended),
+        }
         rep.add(
             "No owner was talked into paying for a hijacked agent's basket",
             hijack_orders == 0,

@@ -280,3 +280,19 @@ def test_non_delivery_claim_refunds_what_is_left_of_the_leg(rt, db, split_world,
     with tx(db):
         left = remaining_leg_value(db, db.get(Order, order.id), _legs(db, order.id)["leg_1"])
     assert left == leg.goods_minor + leg.delivery_minor - line["line_total_minor"]
+
+
+def test_courier_failure_lets_the_customer_claim_at_once(rt, db, split_world, clock):
+    from app.api.routes import _check_not_delivered
+    from app.orders.models import DeliveryJob
+    from app.orders.service import courier_progress, merchant_ready
+
+    p = purchase(rt, db, split_world, funding=CARD)
+    pay(rt, p.checkout_ref)
+    leg = _legs(db, p.order_id)["leg_1"]
+    merchant_ready(rt, leg_id=leg.id)
+    job = db.scalars(select(DeliveryJob).where(DeliveryJob.order_leg_id == leg.id)).one()
+    courier_progress(rt, job_id=job.id, to="collected")
+    courier_progress(rt, job_id=job.id, to="failed")
+    db.expire_all()
+    _check_not_delivered(db, db.get(Order, p.order_id), "leg_1", clock.now())  # no wait
