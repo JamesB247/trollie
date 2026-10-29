@@ -6,6 +6,8 @@ Our other documents explain how Trollie works. This one asks the questions a sho
 
 It started with a voice note from a co-founder's partner, a mother who does the household shopping. We then checked their ideas against what South African shoppers actually do and against what the big retailers launched this year.
 
+> **Read with:** [`reviews/CUSTOMER_VALUE_AND_PRODUCT_STRATEGY_REVIEW_2026-10-29.md`](reviews/CUSTOMER_VALUE_AND_PRODUCT_STRATEGY_REVIEW_2026-10-29.md), a separate review of the same question from the same day. Where the two differ, section 11 below sets out the differences and the decision each one needs.
+
 ---
 
 ## 1. The short answer
@@ -73,7 +75,7 @@ The partner's voice note (7 min 52 s) listed what would make them use the app. I
 
 - Checkers' **Pixie** (April, upgraded in August);
 - Pick n Pay's **Penny** (July);
-- Woolworths' **My Woolies Chef** (July).
+- Woolworths' **W.CHEF / My Woolies Chef**: announced in July, in a limited beta for selected loyalty members since about October, with a wider rollout planned for early 2027.
 
 So we checked each idea against what already exists.
 
@@ -82,7 +84,7 @@ So we checked each idea against what already exists.
 | Everything in one app | "I can buy everything I need on this app" | Each retailer, for its own shelves only. OneCart lets you shop several stores but leaves the comparing to you | One list across more than one shop |
 | Reminders when things run out | "You bought this about 30 days ago, it should be done. Shall I order it again?" | Pixie (restock suggestions), Penny (reload previous baskets) | Remembers across shops, not inside one loyalty card |
 | Lifestyle and diet changes | "I'm going on a diet… you always buy full cream milk, we can start buying fat-free milk" | Penny (dietary preferences in meal plans) | Suggests swaps, but **never swaps without asking** |
-| Meal plans and recipes | "This Sunday I want to cook lamb… remind me on Saturday to marinate" | Penny (meal plans within a budget), My Woolies Chef, Pixie (Jamie Oliver recipes) | The meal plan uses whichever shop has the ingredients cheapest |
+| Meal plans and recipes | "This Sunday I want to cook lamb… remind me on Saturday to marinate" | Penny (meal plans within a budget), W.CHEF (beta), Pixie (Jamie Oliver recipes) | The meal plan uses whichever shop has the ingredients cheapest |
 | Save a meal you saw | "Scan a meal… I want to cook this one day" | Pixie (photo of a handwritten recipe), Penny (photos) | Same feature, plus stores compared |
 | Savings and rewards | "As a mom and a wife, we always want to save somewhere somehow" | Xtra Savings, Smart Shopper, WRewards, each for its own store only | **Shows how much you saved compared with one shop**, honestly, on every order |
 | Specials across stores | "Woolies had the rice at R68 and Checkers still had R78" | Nobody does this and buys for you. Grocify compares prices but doesn't order | This is the core of Trollie |
@@ -284,7 +286,7 @@ The question to answer: **would they pay a fee for the saving, and how much?**
 **Retailer AI assistants and competitors**
 - Pixie: Bizcommunity, April 2026 and 13 August 2026; Sowetan, 14 July 2026.
 - Penny: IOL Business Report, 2 July 2026; BusinessDay, 3 July 2026.
-- My Woolies Chef: eNCA, 13 July 2026.
+- W.CHEF / My Woolies Chef: eNCA, 13 July 2026; Bizcommunity, "Woolworths brings AI food assistant W.Chef into live customer testing"; Woolworths Holdings, 8 October 2026.
 - Walmart South Africa:
   - BusinessTech, 27 February 2026 (businesstech.co.za/news/business/852487);
   - Massmart newsroom, November 2025 and March 2026;
@@ -331,3 +333,30 @@ The question to answer: **would they pay a fee for the saving, and how much?**
 - CleverTap, January 2025.
 
 *Not verified, or no South African data found:* a South African mental-load study; how many grocery stokvels there are; Sixty60's total user count; ReciMe's South African user numbers and price (the partner pays yearly; recime.app lists only the free limit of 5 imports a week); how often people want notifications in South Africa.
+
+---
+
+## 11. Reconciling with the separate review (29 October 2026)
+
+The separate review reaches the same conclusion as this document: the product is explained from the builder's side, not the household's. Most single-shop features already exist at Checkers, Pick n Pay and Woolworths. A Shoprite-only pilot cannot prove buying across retail groups. Wallets and connected agents stay in the product, but behind the ordinary shopping journey.
+
+**Where the review is stronger, and we adopt it:**
+
+1. **Lead promise.** The review leads with *"less work getting the household shop done, with an honest delivered total"*, and treats savings as something we show when they are real. This document led with "cheapest complete". The review's worked example shows why its version is safer: a R100 saving on the goods becomes R5 once the second delivery and our fee are added. **Proposed:** lead with less work and the honest total; show the saving on every order, including when there is none. *Founder decision.*
+2. **The pilot can't prove the meal promise.** The partner's stories (lamb, milk, cheese, Sunday meals) need fresh food. The pilot starts with packaged shelf goods (pantry items). Either describe the pilot honestly as *pantry restocking*, or plan a later mixed-basket trial with fresh food. Don't use a dry-goods order as proof of the meal promise.
+3. **Liking an item is not permission to buy it.** Keep four steps separate: *I like this* → *suggest it next shop* → *include it every fortnight (as a draft)* → *buy it within these limits (a separately approved standing instruction)*. This maps directly onto the existing rule that a purchase needs either your approval of the quote or a mandate you signed with your passkey.
+4. **Reminders should say how sure they are.** Use "you confirmed you have it", "you may be running low" and "we don't know". Start with a rhythm the customer sets, not a guess.
+5. **A percentage fee works against a savings promise.** Test a fixed fee per order, a capped percentage and an optional subscription. Never count an existing Xtra Savings Plus subscription as a saving.
+6. **Diet and food-safety limits.** Make swaps only for a reason the customer states (for example, lower salt), backed by product data. No medical claims. Preparation reminders must use checked food-safety guidance.
+7. **A bigger, mixed test group.** About 24 interviews across household organisers, fitness and meal-plan shoppers, convenience shoppers and agent users. Include people who are happy with one retailer and people who dislike the idea.
+
+**What this document adds that the review doesn't have:**
+- Walmart's South African entry.
+- Roots' "about four stores per monthly shop".
+- iqbusiness: 52% want AI to find the lowest price across retailers, and only 8% want automatic reordering.
+- Instacart's $60m FTC settlement as the case against markups.
+- The founders' ReciMe reference and the mall-bundle idea.
+
+**Correction made after the review:** Woolworths' assistant is in **limited beta**, not generally available. Section 2 has been updated.
+
+**Customer requirements CV-01 to CV-16** (review section 16) are proposed for founder sign-off. Once agreed, they belong in `DECISIONS.md`, next to the engineering decisions. Until then they are proposals; they don't change the build.
