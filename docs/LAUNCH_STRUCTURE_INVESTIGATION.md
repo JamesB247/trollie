@@ -181,11 +181,24 @@ confirmed with each company)
 | Checkers Sixty60 | Consumers | No business or corporate account found | Not a channel |
 
 Unlike consumer delivery apps, these wholesale channels exist so that businesses can buy stock
-to resell. That is Trollie's position in Phase 0. They deliver in bulk to a business
-address, not to each household. Buying through them therefore means a small Trollie hub
-that splits cases into customer orders and hands them to a courier. A hub that handles food
-needs a Certificate of Acceptability and a business licence (see "Dark store premises"
-above). Fresh produce and single items still come from in-store picking.
+to resell. That is Trollie's position in Phase 0.
+
+**No premises (founders' direction).** Trollie holds no stock and runs no hub or dark store.
+Each customer's basket is placed as its own order on Trollie's business account. The
+retailer picks and packs it, and the goods move straight to the customer in one of three
+ways, in order of preference:
+
+1. **Retailer delivers to the customer's address.** This needs the retailer to agree to
+   ship to an address other than the account address.
+2. **Courier collects from the branch.** The order is placed for click-and-collect on
+   Trollie's account, and a courier booked by Trollie collects the packed order and
+   delivers it. This maps onto the existing leg states: merchant ready, courier collected,
+   delivered.
+3. **Shopper buys in store.** Used for fresh produce and single items that the business
+   channels do not sell individually.
+
+Business-channel minimums (for example, Red Star's free delivery from R1 000) suit larger
+and stokvel baskets. Small baskets go through route 2 or 3.
 
 **Still open**
 
