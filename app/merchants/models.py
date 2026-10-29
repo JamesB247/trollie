@@ -32,6 +32,10 @@ class Merchant(Base):
     synthetic: Mapped[bool] = mapped_column(default=True)
     # Payout destination is a versioned reference; nothing merchant-supplied can change it.
     payout_destination_version: Mapped[str | None] = mapped_column(Text)
+    # "probation" for newly onboarded merchants: onboarding checks (KYB) can be fooled, so
+    # exposure is limited until the merchant has a delivery record (crowd simulation).
+    risk_tier: Mapped[str] = mapped_column(Text, default="standard", server_default="standard")
+    onboarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = created_at()
 
 

@@ -24,8 +24,42 @@ def test_two_draws_differ():
 
 
 def test_colloquial_targets_exist_in_catalogue_or_are_declared_gaps():
-    from app.simulators.market import MARKET_PRODUCTS
+    """Every everyday word maps to something the large market sells, or is a declared gap."""
+    from app.simulators.bigmarket import FURNITURE, TYPES
 
-    names = " ".join(f"{p.brand} {p.name} {p.variant}".lower() for p in MARKET_PRODUCTS)
+    names = " ".join(
+        [f"{t[1]} {' '.join(t[6])}" for t in TYPES]
+        + [f"{f[1]} {' '.join(f[3])}" for f in FURNITURE]
+    ).lower()
     for word, target in COLLOQUIAL.items():
         assert target is None or target.lower() in names, word
+
+
+def test_large_market_ranges_match_the_brief():
+    from app.simulators.bigmarket import CHAINS, generate_universe, ranges
+
+    universe = generate_universe()
+    assert len(universe) > 60_000
+    assert len({p.code for p in universe}) == len(universe)
+    sizes = {code: len(products) for code, products in ranges(universe).items()}
+    assert sizes["ubuntu"] == 50_000 and sizes["zest"] == 20_000 and sizes["fairbasket"] == 18_000
+    for chain in CHAINS:  # nearest-branch rule: one branch per zone per chain
+        zones = [z for b in chain.branches for z in b.zones]
+        assert len(zones) == len(set(zones)), chain.code
+
+
+def test_scam_store_undercuts_the_market_on_its_bait_lines():
+    from app.simulators.bigmarket import CHAINS, chain_price, generate_universe, ranges
+
+    universe = generate_universe()
+    by = ranges(universe)
+    chains = {c.code: c for c in CHAINS}
+    scam = chains["bargainbox"]
+    fair = chains["fairbasket"]
+    carried = {p.code for p in by["fairbasket"]}
+    cheaper = [
+        chain_price(scam, scam.branches[0], p) < chain_price(fair, fair.branches[0], p)
+        for p in by["bargainbox"]
+        if p.code in carried
+    ]
+    assert cheaper and sum(cheaper) / len(cheaper) > 0.9

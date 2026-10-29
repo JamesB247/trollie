@@ -7,6 +7,9 @@ Fault modes per operation:
 - `lose_stock` (commit_order): a held reservation turns out to be unfulfilable (T10).
 """
 
+import random
+import threading
+import time
 import uuid
 from dataclasses import asdict
 from datetime import timedelta
@@ -23,7 +26,12 @@ from app.merchants.adapter import (
 )
 from app.offers.models import OfferVersion
 from app.simulators.faults import take
-from app.simulators.models import SimMerchantOrder, SimMerchantReservation, SimMerchantStock
+from app.simulators.models import (
+    SimMerchantLatency,
+    SimMerchantOrder,
+    SimMerchantReservation,
+    SimMerchantStock,
+)
 
 DEFAULT_TTL = timedelta(minutes=30)
 UNLIMITED = 1000
@@ -212,6 +220,104 @@ class SimulatedMerchant:
             if order is not None and order.state == "accepted":
                 order.state = "ready"
             return self._order_obs(order, client_ref)
+
+
+class LatentMerchant(SimulatedMerchant):
+    """The simulated merchant behind a network: each call takes the location's configured
+    time and blocks the caller while it does, as a synchronous HTTP call would. A call that
+    exceeds Trollie's adapter budget raises MerchantTimeout at the budget, and half the time
+    the merchant has already acted (the response was lost on the way back).
+
+    Locations without a latency profile behave exactly like SimulatedMerchant."""
+
+    def __init__(self, engine: Engine, clock: Clock, ttl: timedelta = DEFAULT_TTL) -> None:
+        super().__init__(engine, clock, ttl)
+        self._profiles: dict[uuid.UUID, SimMerchantLatency | None] = {}
+        self._loaded_at = 0.0
+        self._lock = threading.Lock()
+        self._rng = random.Random()
+
+    def _profile(self, location_id: uuid.UUID | None) -> SimMerchantLatency | None:
+        if location_id is None:
+            return None
+        with self._lock:
+            if time.monotonic() - self._loaded_at > 30:  # profiles are reloaded periodically
+                with Session(self.engine) as s:
+                    rows = list(s.scalars(select(SimMerchantLatency)))
+                    s.expunge_all()
+                self._profiles = {r.location_id: r for r in rows}
+                self._loaded_at = time.monotonic()
+            return self._profiles.get(location_id)
+
+    def _location_of(self, client_ref: str) -> uuid.UUID | None:
+        with Session(self.engine) as s:
+            res = s.get(SimMerchantReservation, client_ref)
+            if res is not None:
+                return res.location_id
+            order = s.get(SimMerchantOrder, client_ref)
+            return order.location_id if order is not None else None
+
+    def _latent(self, location_id, client_ref: str, act):
+        p = self._profile(location_id)
+        if p is None:
+            return act()
+        if self._rng.random() * 1000 < p.slow_permille:
+            ms = p.slow_ms
+        else:
+            ms = max(0.0, self._rng.gauss(p.mean_ms, p.jitter_ms))
+        if ms <= p.timeout_ms:
+            time.sleep(ms / 1000)
+            return act()
+        time.sleep(p.timeout_ms / 1000)
+        if self._rng.random() < 0.5:
+            act()  # the merchant acted; its answer never arrived
+        raise MerchantTimeout(client_ref)
+
+    def prepare_reservation(self, *, location_id, client_ref, lines):
+        return self._latent(
+            location_id,
+            client_ref,
+            lambda: super(LatentMerchant, self).prepare_reservation(
+                location_id=location_id, client_ref=client_ref, lines=lines
+            ),
+        )
+
+    def get_reservation(self, *, client_ref):
+        return self._latent(
+            self._location_of(client_ref),
+            client_ref,
+            lambda: super(LatentMerchant, self).get_reservation(client_ref=client_ref),
+        )
+
+    def release_reservation(self, *, client_ref):
+        return self._latent(
+            self._location_of(client_ref),
+            client_ref,
+            lambda: super(LatentMerchant, self).release_reservation(client_ref=client_ref),
+        )
+
+    def commit_order(self, *, location_id, client_ref, reservation_ref):
+        return self._latent(
+            location_id,
+            client_ref,
+            lambda: super(LatentMerchant, self).commit_order(
+                location_id=location_id, client_ref=client_ref, reservation_ref=reservation_ref
+            ),
+        )
+
+    def get_order(self, *, client_ref):
+        return self._latent(
+            self._location_of(client_ref),
+            client_ref,
+            lambda: super(LatentMerchant, self).get_order(client_ref=client_ref),
+        )
+
+    def cancel_order(self, *, client_ref):
+        return self._latent(
+            self._location_of(client_ref),
+            client_ref,
+            lambda: super(LatentMerchant, self).cancel_order(client_ref=client_ref),
+        )
 
 
 def restock(session: Session) -> int:

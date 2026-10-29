@@ -28,12 +28,15 @@ from alembic.config import Config
 from sqlalchemy import create_engine, text
 
 from app.seed import sid
+from app.simulators.bigmarket import CHAINS as BIG_CHAINS
+from app.simulators.bigmarket import location_id as big_location_id
 from app.simulators.market import CHAINS
 from scripts.crowd.actions import Board, Shopper, Toolbox
 from scripts.crowd.api import BREACH, BUG, FRICTION, OK, SLOW, Api, Log
-from scripts.crowd.brains import make_brain
-from scripts.crowd.oracle import audit
+from scripts.crowd.brains import StochasticBrain, make_brain
+from scripts.crowd.oracle import audit, scenario_facts
 from scripts.crowd.personas import draw_crowd
+from scripts.crowd.traffic import traffic, traffic_html
 from scripts.crowd.world import World
 
 ADMIN_URL = "postgresql+psycopg://trollie:trollie@localhost:5432/trollie_test"
@@ -68,6 +71,10 @@ def spawn(database_url: str, log_path: Path) -> tuple[subprocess.Popen, str]:
         "TROLLIE_RUN_WORKER": "true",
         "TROLLIE_WEBAUTHN_RP_ID": "localhost",
         "TROLLIE_WEBAUTHN_ORIGIN": base,
+        # Time-based controls follow the compressed day (20 minutes = 24 hours).
+        "TROLLIE_DELIVERY_GRACE_MINUTES": "2",
+        "TROLLIE_WALLET_CLEARING_MINUTES": "6",
+        "TROLLIE_AGENT_STRIKE_WINDOW_MINUTES": "10",
     }
     out = open(log_path, "w")  # noqa: SIM115 - lives as long as the server
     proc = subprocess.Popen(
@@ -85,26 +92,61 @@ def spawn(database_url: str, log_path: Path) -> tuple[subprocess.Popen, str]:
     raise RuntimeError(f"server did not start; see {log_path}")
 
 
-async def live(s: Shopper, tb: Toolbox, brain, deadline: float, speed: float, stats) -> None:
+# Relative shopping intensity per hour of a South African day for an online grocer: quiet
+# night, morning trickle, lunch bump, evening peak after work. Illustrative, not measured.
+HOUR_WEIGHTS = [0.15, 0.1, 0.08, 0.08, 0.1, 0.25, 0.5, 0.7, 0.8, 0.9, 1.0, 1.1,
+                1.3, 1.2, 0.9, 0.9, 1.1, 1.6, 2.0, 1.9, 1.5, 1.0, 0.6, 0.3]  # fmt: skip
+# Fraud is busiest when people sleep.
+NIGHT_WEIGHTS = [1.6, 1.8, 1.8, 1.5, 1.0, 0.6, 0.4, 0.4, 0.5, 0.5, 0.5, 0.5,
+                 0.5, 0.5, 0.5, 0.5, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.2, 1.4]  # fmt: skip
+
+
+def schedule(s: Shopper, day_s: float) -> list[tuple[float, int]]:
+    """Sessions as (offset seconds from the start of the run, number of actions)."""
     rng = s.p.rng
-    await asyncio.sleep(rng.uniform(0, 30) * speed)  # people arrive at different times
-    try:
-        await tb.onboard(s)
-    except Exception as exc:  # noqa: BLE001
-        stats["onboard_failures"].append(f"{s.name}: {exc}")
-        return
-    while time.monotonic() < deadline:
-        # Bursty behaviour: mostly short pauses, sometimes a long break.
-        pause = rng.expovariate(1 / s.p.archetype.mean_think_s)
-        if rng.random() < 0.08:
-            pause += rng.uniform(30, 120)
-        await asyncio.sleep(pause * speed)
-        if time.monotonic() >= deadline:
+    key = s.p.archetype.key
+    hostile = key in ("malicious", "fraudster", "hijacker")
+    n = rng.randint(4, 7) if hostile else rng.choices([1, 2, 3, 4], [3, 4, 3, 2])[0]
+    weights = NIGHT_WEIGHTS if hostile else HOUR_WEIGHTS
+    out = []
+    for _ in range(n):
+        hour = rng.choices(range(24), weights)[0] + rng.random()
+        out.append((hour / 24 * day_s, rng.randint(4, 14)))
+    if key in ("delegator", "stokvel", "household", "careful", "furniture", "broke"):
+        # Most people come back later in the day to see where their order is.
+        out.append((rng.uniform(0.6, 0.97) * day_s, rng.randint(1, 3)))
+    return sorted(out)
+
+
+async def live(s: Shopper, tb: Toolbox, brain, start: float, day_s: float, speed: float, stats):
+    rng = s.p.rng
+    sessions = schedule(s, day_s)
+    onboarded = False
+    for offset, actions in sessions:
+        wait = start + offset - time.monotonic()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        if time.monotonic() > start + day_s:
             break
+        if not onboarded:
+            try:
+                await tb.onboard(s)
+                onboarded = True
+            except Exception as exc:  # noqa: BLE001
+                stats["onboard_failures"].append(f"{s.name}: {exc}")
+                return
+        tb.session_opened(s)
         try:
-            await brain.step(s, tb)
-        except Exception as exc:  # noqa: BLE001 - a harness error is recorded, not fatal
+            await brain.session_start(s, tb)
+        except Exception as exc:  # noqa: BLE001
             stats["harness_errors"].append(f"{s.name}: {type(exc).__name__}: {exc}")
+        for _ in range(actions):
+            await asyncio.sleep(rng.expovariate(1 / s.p.archetype.mean_think_s) * speed)
+            try:
+                await brain.step(s, tb)
+            except Exception as exc:  # noqa: BLE001 - a harness error is recorded, not fatal
+                stats["harness_errors"].append(f"{s.name}: {type(exc).__name__}: {exc}")
+        tb.session_closed(s)
 
 
 async def main_async(args) -> int:
@@ -120,29 +162,42 @@ async def main_async(args) -> int:
     print(f"seed {seed}  server {base}  output {out}")
     api = Api(base)
     try:
-        await api.must("POST", "/v1/dev/seed", params={"market": "true"})
+        large = args.market == "large"
+        t0 = time.monotonic()
+        seeded = await api.must("POST", "/v1/dev/seed", params={"market": args.market}, timeout=600)
+        print(f"seeded in {time.monotonic() - t0:.0f}s: {seeded.get('large_market')}")
         # Merchant faults target a branch (location id); the seed's ids are deterministic.
-        loc_ids = [str(sid("location", b.code)) for c in CHAINS for b in c.branches]
+        if large:
+            loc_ids = [str(big_location_id(b.code)) for c in BIG_CHAINS for b in c.branches]
+        else:
+            loc_ids = [str(sid("location", b.code)) for c in CHAINS for b in c.branches]
 
-        log, board = Log(), Board()
+        day_s = args.minutes * 60
+        log, board = Log(day_seconds=day_s), Board()
         tb = Toolbox(api, log, board)
-        crowd = draw_crowd(args.users, rng)
+        crowd = draw_crowd(args.users, rng, large=large)
         shoppers = [Shopper(p) for p in crowd]
         brains = [make_brain(s, args.brain, rng) for s in shoppers]
         mix = Counter(s.p.archetype.label for s in shoppers)
         print("crowd:", ", ".join(f"{k} x{v}" for k, v in mix.most_common()))
-        world = World(api, board, random.Random(rng.getrandbits(64)), args.chaos)
+        world = World(api, board, random.Random(rng.getrandbits(64)), args.chaos, log)
         stop = asyncio.Event()
-        deadline = time.monotonic() + args.minutes * 60
+        start = time.monotonic()
+        deadline = start + day_s
         stats = defaultdict(list)
-        world_task = asyncio.create_task(world.run(stop, loc_ids))
-        progress = asyncio.create_task(_progress(log, deadline))
+        world_task = asyncio.create_task(world.run(stop, loc_ids, start + 0.3 * day_s))
+        progress = asyncio.create_task(_progress(log, deadline, tb))
         await asyncio.gather(
             *[
-                live(s, tb, b, deadline, args.speed, stats)
+                live(s, tb, b, start, day_s, args.speed, stats)
                 for s, b in zip(shoppers, brains, strict=True)
             ]
         )
+        # The night after: couriers finish (or don't), then people check what arrived.
+        await asyncio.sleep(max(0, deadline - time.monotonic()) + args.tail_minutes * 60)
+        for s, b in zip(shoppers, brains, strict=True):
+            if s.orders:
+                await b.session_start(s, tb)
         # Let the world finish deliveries and transfers, then stop the chaos and settle.
         await asyncio.sleep(10)
         await api.call("DELETE", "/v1/dev/sim/faults")
@@ -159,10 +214,23 @@ async def main_async(args) -> int:
         tb_resp = await api.must("GET", "/v1/dev/ledger/trial-balance")
         sent = {s.account_id: s.topups_sent_minor for s in shoppers if s.account_id}
         oracle = audit(db_url, sent, tb_resp)
+        hijacks = [(v.account_id, when) for v, _, when in board.hijacked]
+        scenario = scenario_facts(db_url, grace_s=StochasticBrain.grace_s, hijacks=hijacks)
+        oracle.checks += scenario.checks
+        oracle.facts |= scenario.facts
         log.dump(out / "events.jsonl")
         summary = summarise(seed, args, shoppers, log, world, oracle, stats, out)
+        summary["traffic"] = traffic(log, tb, args.minutes)
+        summary["round2"] = {
+            "hijacks": [(v.name, th.name) for v, th, _ in board.hijacked],
+            "hijack_requests_sent": board.hijack_requests,
+            "stolen_loaded_minor": board.stolen_minor,
+            "timeline": world.timeline,
+            "seeded": seeded.get("large_market"),
+        }
         (out / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
         (out / "REPORT.md").write_text(render(summary))
+        (out / "traffic.html").write_text(traffic_html(summary))
         print(render(summary))
         return 1 if summary["critical_failures"] or summary["verdicts"].get(BREACH) else 0
     finally:
@@ -172,12 +240,16 @@ async def main_async(args) -> int:
             proc.wait(timeout=15)
 
 
-async def _progress(log: Log, deadline: float) -> None:
+async def _progress(log: Log, deadline: float, tb: Toolbox) -> None:
     while True:
         await asyncio.sleep(30)
         left = max(0, int(deadline - time.monotonic()))
         c = Counter(e.verdict for e in log.events)
-        print(f"  {len(log.events)} actions, {left}s left: {dict(c)}", flush=True)
+        print(
+            f"  sim {log.hour():05.2f}h  in app {len(tb.online)}  {len(log.events)} actions, "
+            f"{left}s left: {dict(c)}",
+            flush=True,
+        )
 
 
 def summarise(seed, args, shoppers, log: Log, world: World, oracle, stats, out) -> dict:
@@ -333,10 +405,12 @@ def main() -> None:
     )
     ap.add_argument("--spawn-server", action="store_true")
     ap.add_argument("--users", type=int, default=60)
-    ap.add_argument("--minutes", type=float, default=8)
+    ap.add_argument("--minutes", type=float, default=20, help="one simulated day")
     ap.add_argument("--seed", type=int)
     ap.add_argument("--brain", choices=["stochastic", "claude", "mixed"], default="stochastic")
     ap.add_argument("--chaos", type=float, default=0.5, help="chance per tick of a fault")
+    ap.add_argument("--market", choices=["small", "large"], default="large")
+    ap.add_argument("--tail-minutes", type=float, default=4, help="after the day: deliveries")
     ap.add_argument("--speed", type=float, default=1.0, help="<1 compresses pauses")
     ap.add_argument("--out")
     sys.exit(asyncio.run(main_async(ap.parse_args())))

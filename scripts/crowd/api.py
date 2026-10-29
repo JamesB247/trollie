@@ -31,15 +31,23 @@ class Event:
     verdict: str
     detail: str
     ms: int
+    stores: str = ""  # merchant codes the action touched, comma-separated
+    hour: float = 0.0  # hour of the simulated day (the run is one compressed day)
 
 
 @dataclass
 class Log:
     started: float = field(default_factory=time.monotonic)
     events: list[Event] = field(default_factory=list)
+    day_seconds: float = 0.0  # wall-clock length of one simulated day; 0 = not a day run
+
+    def hour(self) -> float:
+        if not self.day_seconds:
+            return 0.0
+        return round((time.monotonic() - self.started) / self.day_seconds * 24, 2)
 
     def add(self, **kw: Any) -> Event:
-        ev = Event(t=round(time.monotonic() - self.started, 2), **kw)
+        ev = Event(t=round(time.monotonic() - self.started, 2), hour=self.hour(), **kw)
         self.events.append(ev)
         return ev
 
@@ -108,6 +116,8 @@ class Api:
         return Reply(r.status_code, body, ms)
 
     async def must(self, method: str, url: str, token: str | None = None, **kw: Any) -> Any:
+        if "timeout" in kw:
+            kw["timeout"] = httpx.Timeout(kw["timeout"])
         r = await self.call(method, url, token, **kw)
         if not r.ok:
             raise RuntimeError(f"{method} {url} -> {r.status}: {r.body}")

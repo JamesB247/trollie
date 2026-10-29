@@ -106,3 +106,16 @@ class SimCourierBooking(Base):
     location_id: Mapped[uuid.UUID]
     address_version_id: Mapped[uuid.UUID]
     state: Mapped[str] = mapped_column(Text)
+
+
+class SimMerchantLatency(Base):
+    """How slow a simulated merchant integration is, and how long Trollie waits for it."""
+
+    __tablename__ = "sim_merchant_latency"
+
+    location_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    mean_ms: Mapped[int]
+    jitter_ms: Mapped[int]
+    slow_permille: Mapped[int]  # share of calls that take slow_ms instead
+    slow_ms: Mapped[int]
+    timeout_ms: Mapped[int]  # Trollie's adapter budget; beyond it the call times out

@@ -37,9 +37,37 @@ ATTACK_WEIGHTS = {
 
 
 class StochasticBrain:
+    grace_s = 120.0  # how long after a delivery window a shopper waits before complaining
+
+    async def session_start(self, s: Shopper, tb: Toolbox) -> None:
+        """Opening the app: look at deliveries, and at anything the agent asked to approve."""
+        if s.orders:
+            await tb.check_deliveries(s, self.grace_s)
+        if s.envelope_id and tb.board.agent_requests.get(s.account_id):
+            await tb.approve_agent_requests(s)
+
     async def step(self, s: Shopper, tb: Toolbox) -> None:
         rng = s.p.rng
         traits = s.p.archetype.traits
+        if "hijacks_agents" in traits:
+            if s.stolen:
+                await tb.use_stolen_agent(s)
+            elif rng.random() < 0.3:
+                await tb.attack(s, rng.choice(["forge_token", "view_other_order", "other_address"]))
+            return
+        if "stolen_funds" in traits:
+            if not s.wallet or (rng.random() < 0.15 and s.topups_sent_minor < 4_000_000):
+                await tb.stolen_topup(
+                    s, rng.randint(*s.p.archetype.budget_rands), rng.uniform(90, 300)
+                )
+                return
+            if s.orders and rng.random() < 0.25:
+                await tb.redeem(s, "[fraud] cash out what's left", rng.randint(500, 8000))
+                return
+            if s.orders and rng.random() < 0.1:
+                for _ in range(5):  # structuring: many small loads
+                    await tb.top_up(s, "[fraud] small loads", 490)
+                return
         # Attackers first shop a little, so they hold orders and assertions to abuse.
         if s.p.is_attacker and rng.random() < (0.7 if s.orders else 0.35):
             kinds = list(ATTACK_WEIGHTS)
@@ -116,7 +144,9 @@ class StochasticBrain:
             return
         if s.plan:
             word = s.plan.pop(0)
-            if "bulk" in traits:
+            if {"big_ticket", "stolen_funds"} & traits:
+                packs = 1 if "big_ticket" in traits else rng.randint(1, 3)
+            elif "bulk" in traits:
                 packs = rng.randint(3, 25)
             elif "overreaches" in traits:
                 packs = rng.randint(1, 5)
@@ -269,6 +299,9 @@ class ClaudeBrain:
         )
         self.tools = _tool_defs(s.p.is_attacker)
         self.pending: list = [{"type": "text", "text": "You open the Trollie app. What now?"}]
+
+    async def session_start(self, s: Shopper, tb: Toolbox) -> None:
+        await self.fallback.session_start(s, tb)
 
     async def step(self, s: Shopper, tb: Toolbox) -> None:
         if self.refused:

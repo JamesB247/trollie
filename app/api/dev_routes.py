@@ -57,19 +57,28 @@ class FaultIn(Strict):
 
 
 @router.post("/seed")
-def dev_seed(market: bool = False, c: AppContext = Depends(dev_only)):
-    """Seed the base fixture; with `market=true`, also the multi-region crowd market."""
+def dev_seed(
+    market: Literal["none", "true", "small", "large"] = "none",
+    c: AppContext = Depends(dev_only),
+):
+    """Seed the base fixture; `market=small` (or `true`) adds the 90-product crowd market,
+    `market=large` the ~63 000-product catalogue-scale market (I-043)."""
+    from app.simulators.bigmarket import seed_bigmarket
     from app.simulators.market import seed_market
     from app.simulators.merchant import restock
 
+    large = None
     with c.rt.sessions() as s, s.begin():
         ids = seed(s, now=c.rt.clock.now())
-        if market:
+        if market in ("true", "small"):
             ids |= seed_market(s, now=c.rt.clock.now())
+        elif market == "large":
+            large = seed_bigmarket(s, now=c.rt.clock.now())
         restocked = restock(s)
     return {
         "merchants": sorted(k for k in ids if k.startswith("merchant:")),
         "restocked_rows": restocked,
+        "large_market": large,
     }
 
 

@@ -14,13 +14,18 @@ import random
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.simulators.authenticator import SoftAuthenticator
+from app.simulators.bigmarket import CHAINS as BIG_CHAINS
+from app.simulators.bigmarket import location_id as big_location_id
 from scripts.crowd.api import BREACH, BUG, FRICTION, INFO, OK, REFUSED, SLOW, Api, Log, Reply
 from scripts.crowd.personas import COLLOQUIAL, Persona
 
 SLOW_MS = 5000
+# Branch location id -> merchant code, for per-store traffic and latency.
+STORE_OF = {str(big_location_id(b.code)): c.code for c in BIG_CHAINS for b in c.branches}
 CARD = "pay_per_order:card_auth_capture"
 INSTANT = "pay_per_order:immediate"
 
@@ -51,6 +56,9 @@ class Shopper:
     grant_id: str | None = None
     plan: list[str] = field(default_factory=list)
     agent_proposed: bool = False
+    complained: set[str] = field(default_factory=set)
+    my_quotes: set[str] = field(default_factory=set)  # every quote this shopper was given
+    stolen: tuple | None = None  # (victim, agent token, agent id, envelope id)
 
     @property
     def name(self) -> str:
@@ -69,6 +77,10 @@ class Board:
     envelopes: list[str] = field(default_factory=list)
     addresses: list[str] = field(default_factory=list)
     transfers: list[tuple[float, dict]] = field(default_factory=list)  # (due, transfer)
+    agent_requests: dict[str, list[tuple[str, int, str]]] = field(default_factory=dict)
+    hijacked: list[tuple] = field(default_factory=list)
+    hijack_requests: int = 0
+    stolen_minor: int = 0
 
 
 class Toolbox:
@@ -76,11 +88,29 @@ class Toolbox:
         self.api = api
         self.log = log
         self.board = board
+        self.online: set[str] = set()  # shoppers with the app open right now
+        self.sessions: list[tuple[float, float, str]] = []  # (open hour, close hour, archetype)
+        self._opened: dict[str, float] = {}
+
+    def session_opened(self, s: Shopper) -> None:
+        self.online.add(s.name)
+        self._opened[s.name] = self.log.hour()
+
+    def session_closed(self, s: Shopper) -> None:
+        self.online.discard(s.name)
+        self.sessions.append((self._opened.pop(s.name, 0.0), self.log.hour(), s.p.archetype.key))
 
     # --- logging -------------------------------------------------------------------
 
     def record(
-        self, s: Shopper, action: str, said: str, r: Reply | None, verdict: str, detail: str
+        self,
+        s: Shopper,
+        action: str,
+        said: str,
+        r: Reply | None,
+        verdict: str,
+        detail: str,
+        stores: str = "",
     ) -> dict[str, Any]:
         if r is not None:
             if r.status is not None and r.status >= 500:
@@ -100,6 +130,7 @@ class Toolbox:
             verdict=verdict,
             detail=detail,
             ms=r.ms if r else 0,
+            stores=stores,
         )
         return {
             "verdict": verdict,
@@ -108,12 +139,19 @@ class Toolbox:
             "body": _short(r.body) if r else None,
         }
 
-    def judged(self, s, action, said, r: Reply, ok_detail: str, *, honest=True):
+    def judged(self, s, action, said, r: Reply, ok_detail: str, *, honest=True, stores=""):
         """Default judgement: 2xx OK; 4xx FRICTION for honest actors, REFUSED for attacks."""
         if r.ok:
-            return self.record(s, action, said, r, OK, ok_detail)
+            return self.record(s, action, said, r, OK, ok_detail, stores)
         detail = f"{r.code or r.status}: {_reason(r.body)}"
-        return self.record(s, action, said, r, FRICTION if honest else REFUSED, detail)
+        return self.record(s, action, said, r, FRICTION if honest else REFUSED, detail, stores)
+
+    def stores_of(self, quote: dict | None) -> str:
+        if not quote:
+            return ""
+        return ",".join(
+            STORE_OF.get(leg["location_id"], leg.get("display_name", "?")) for leg in quote["legs"]
+        )
 
     # --- onboarding ----------------------------------------------------------------
 
@@ -141,9 +179,11 @@ class Toolbox:
 
     # --- honest shopping -----------------------------------------------------------
 
-    async def chat(self, s: Shopper, said: str) -> dict:
+    async def chat(self, s: Shopper, said: str, stores: str = "") -> dict:
         """There is no conversational channel yet; the words go nowhere."""
-        return self.record(s, "chat", said, None, INFO, "no chat channel: message not understood")
+        return self.record(
+            s, "chat", said, None, INFO, "no chat channel: message not understood", stores
+        )
 
     async def new_list(self, s: Shopper, said: str, budget_rands: int | None = None) -> dict:
         body: dict[str, Any] = {"address_version_id": s.address_id}
@@ -228,6 +268,7 @@ class Toolbox:
         got = {k: v for k, v in s.options.items() if v}
         for q in got.values():
             self.board.quotes.append(q["quote_id"])
+            s.my_quotes.add(q["quote_id"])
         blocking = r.body["blocking"]
         if not got:
             kinds = sorted({b["kind"] for b in blocking})
@@ -253,13 +294,14 @@ class Toolbox:
         if r.ok:
             s.firm = r.body
             self.board.quotes.append(r.body["quote_id"])
+            s.my_quotes.add(r.body["quote_id"])
             stores = " + ".join(leg["display_name"] for leg in r.body["legs"])
             return self.record(
                 s, "choose_quote", said, r, OK,
                 f"{option}/{mode}/{funding.split(':')[0]}: R{r.body['total_minor'] / 100:.2f} "
-                f"from {stores}",
+                f"from {stores}", self.stores_of(r.body),
             )  # fmt: skip
-        return self.judged(s, "choose_quote", said, r, "")
+        return self.judged(s, "choose_quote", said, r, "", stores=self.stores_of(est))
 
     async def _assert(self, s: Shopper, subject_id: str) -> tuple[Reply, dict | None]:
         ch = await self.api.call(
@@ -283,17 +325,19 @@ class Toolbox:
     async def approve_and_order(self, s: Shopper, said: str) -> dict:
         if not s.firm:
             return self.record(s, "approve_order", said, None, FRICTION, "nothing to approve")
+        stores = self.stores_of(s.firm)
         r, _ = await self._assert(s, s.firm["quote_id"])
         if not r.ok:
             s.firm = None if r.code == "QUOTE_EXPIRED" else s.firm
-            return self.judged(s, "approve_order", said, r, "")
+            return self.judged(s, "approve_order", said, r, "", stores=stores)
         s.approval_id = r.body["approval_id"]
         self.board.approvals.append(s.approval_id)
         o = await self.api.call(
             "POST", "/v1/orders", s.token, idem=True, json={"approval_id": s.approval_id}
         )
         if not o.ok:
-            return self.judged(s, "approve_order", said, o, "")
+            s.firm = None  # the shopper gives up on this basket rather than looping
+            return self.judged(s, "approve_order", said, o, "", stores=stores)
         oid = o.body["order_id"]
         s.orders.append(oid)
         s.order_quotes[oid] = s.firm
@@ -306,7 +350,7 @@ class Toolbox:
                 s.checkout[oid] = c.body["checkout_ref"]
             elif not c.ok:
                 return self.judged(s, "approve_order", said, c, "")
-        return self.record(s, "approve_order", said, o, OK, f"order {oid[:8]} ({funding})")
+        return self.record(s, "approve_order", said, o, OK, f"order {oid[:8]} ({funding})", stores)
 
     async def bank_app(self, s: Shopper, said: str, order_id: str, approve: bool) -> dict:
         """The shopper completes (or fails) the bank step. Stands in for the bank's app."""
@@ -489,6 +533,7 @@ class Toolbox:
         if not est.ok:
             return self.judged(s, "agent_proposes", "", est, "")
         s.options = est.body["options"]
+        s.my_quotes.update(v["quote_id"] for v in s.options.values() if v)
         best = s.options.get("cheapest")
         if not best:
             kinds = sorted({b["kind"] for b in est.body["blocking"]})
@@ -553,7 +598,7 @@ class Toolbox:
         qid = s.p.rng.choice(self.board.quotes)
         r = await self.api.call("GET", f"/v1/quotes/{qid}", s.token)
         if r.ok and r.body.get("quote_id") == qid and qid not in _own_quotes(s):
-            return self.record(s, "view_other_quote", said, r, BREACH, "read another's quote")
+            return self.record(s, "view_other_quote", said, r, BREACH, f"read quote {qid}")
         return self.record(s, "view_other_quote", said, r, REFUSED, f"{r.code or r.status}")
 
     async def _atk_approve_other_quote(self, s, said):
@@ -966,9 +1011,219 @@ class Toolbox:
                 )  # fmt: skip
         return self.record(s, "cancel_after_delivery", said, None, INFO, "no delivered order")
 
+    # --- round 2: deliveries, complaints, stolen money, hijacked agents --------------------
+
+    async def check_deliveries(self, s: Shopper, grace_s: float) -> None:
+        """Look at each paid order; if a store's window has passed with nothing delivered,
+        complain and claim the money back for that store's part."""
+        now = datetime.now(UTC)
+        for oid in list(s.orders):
+            q = s.order_quotes.get(oid)
+            if not q or oid in s.complained:
+                continue
+            late = [
+                leg for leg in q["legs"]
+                if datetime.fromisoformat(leg["window_end"]) + timedelta(seconds=grace_s) < now
+            ]  # fmt: skip
+            if not late:
+                continue
+            st = await self.api.call("GET", f"/v1/orders/{oid}", s.token)
+            if not st.ok or st.body["state"] in ("CANCELLED", "EXPIRED", "PAYMENT_PENDING"):
+                continue
+            states = {leg["leg_id"]: leg for leg in st.body["legs"]}
+            for leg in late:
+                live = states.get(leg["leg_id"])
+                if live is None or live["state"] in ("DELIVERED", "CANCELLED", "REJECTED"):
+                    continue
+                store = STORE_OF.get(leg["location_id"], leg["display_name"])
+                s.complained.add(oid)
+                await self.chat(
+                    s,
+                    s.p.rng.choice(
+                        [
+                            f"I paid but my {leg['display_name']} order never came!",
+                            "Your bot recommended this store and now I have nothing. Refund me.",
+                            "Ngikhokhele kodwa angitholanga lutho. Where is my stuff?",
+                            "Ek het betaal maar niks gekry nie.",
+                        ]
+                    ),
+                    stores=store,
+                )
+                amount = leg["goods_minor"] + leg["delivery_fee_minor"]
+                r = await self.api.call(
+                    "POST",
+                    f"/v1/orders/{oid}/issues",
+                    s.token,
+                    idem=True,
+                    # No amount: Trollie refunds what is left of that store's part (I-044).
+                    json={"leg_id": leg["leg_id"], "reason": "not_delivered"},
+                )
+                self.judged(
+                    s, "claim_not_delivered", "I never received it", r,
+                    f"R{amount / 100:.2f} back for {store} (state {live['state']})", stores=store,
+                )  # fmt: skip
+
+    async def approve_agent_requests(self, s: Shopper) -> None:
+        """The owner opens the app and deals with what their agent asked them to approve.
+        A busy owner approves some requests without reading them (approval fatigue)."""
+        inbox = self.board.agent_requests.pop(s.account_id, [])
+        rng = s.p.rng
+        for quote_id, total, note in inbox[-5:]:
+            careless = "careless" in s.p.archetype.traits or rng.random() < 0.25
+            looks_fine = total <= s.p.budget_rands * 100 * 0.5
+            if not (looks_fine or careless) or rng.random() < 0.3:
+                self.record(s, "decline_agent_request", note[:80], None, INFO,
+                            f"owner ignored a R{total / 100:.2f} request")  # fmt: skip
+                continue
+            r = await self.api.call(
+                "POST",
+                f"/v1/quotes/{quote_id}/firm",
+                s.token,
+                json={
+                    "fulfilment_mode": "allow_partial",
+                    "funding_source": f"wallet:envelope:{s.envelope_id}",
+                },
+            )
+            if not r.ok:
+                self.judged(s, "approve_agent_request", note[:80], r, "")
+                continue
+            s.firm = r.body
+            await self.approve_and_order(s, f"approving my agent's request: {note[:60]}")
+
+    async def stolen_topup(self, s: Shopper, rands: int, reverse_after_s: float) -> dict:
+        """Money from someone else's bank account: confirmed now, recalled by the bank later."""
+        if not s.wallet:
+            await self.open_wallet(s, "opening a wallet")
+        r = await self.api.call(
+            "POST", "/v1/wallet/topups", s.token, json={"amount_minor": rands * 100}
+        )
+        if not r.ok:
+            return self.judged(s, "stolen_topup", "loading money", r, "", honest=False)
+        transfer = {
+            "transfer_ref": r.body["transfer_ref"],
+            "reference": r.body["funding_reference"],
+            "amount_minor": rands * 100,
+        }
+        now = time.monotonic()
+        self.board.transfers.append(
+            (now + s.p.rng.uniform(1, 5), {**transfer, "status": "confirmed"})
+        )
+        self.board.transfers.append((now + reverse_after_s, {**transfer, "status": "reversed"}))
+        s.topups_sent_minor += rands * 100
+        self.board.stolen_minor += rands * 100
+        return self.record(
+            s, "stolen_topup", "[fraud] loading money from a hijacked bank account", r, INFO,
+            f"R{rands} arrives now; the victim's bank recalls it in ~{reverse_after_s:.0f}s",
+        )  # fmt: skip
+
+    async def use_stolen_agent(self, s: Shopper) -> None:
+        """Act with a shopping agent's token stolen from its owner."""
+        if not s.stolen:
+            return
+        victim, token, agent_id, envelope_id = s.stolen
+        rng = s.p.rng
+        moves = ["push_basket", "execute", "broaden", "self_fund", "read_orders", "poison"]
+        moves += ["withdraw", "revoke"]
+        move = rng.choices(moves, [6, 2, 1, 1, 2, 1, 1, 1])[0]
+        said = f"[hijacked agent of {victim.name}] {move}"
+        if move == "push_basket":
+            if not victim.session_id:
+                await self.api.call("GET", "/v1/wallet", token)  # probing; owner has no open list
+                self.record(s, "hijack_push_basket", said, None, INFO, "owner has no open list")
+                return
+            word = rng.choice(["TV", "smartphone", "fridge", "power station", "washing machine"])
+            hits = await self.api.call(
+                "GET", "/v1/catalogue/products", token, params={"q": COLLOQUIAL.get(word, word)}
+            )
+            if not (hits.ok and hits.body):
+                return
+            pick = max(hits.body[:20], key=lambda h: h["variant"])
+            add = await self.api.call(
+                "POST",
+                f"/v1/shopping-sessions/{victim.session_id}/items",
+                token,
+                json={
+                    "line_id": f"hj-{uuid.uuid4().hex[:8]}",
+                    "candidates": [{"product_id": pick["product_id"]}],
+                    "quantity": {"packs": rng.randint(1, 3)},
+                },
+            )
+            if not add.ok:
+                self.judged(s, "hijack_push_basket", said, add, "", honest=False)
+                return
+            est = await self.api.call(
+                "POST", f"/v1/shopping-sessions/{victim.session_id}/quotes", token, json={}
+            )
+            best = (est.body.get("options") or {}).get("cheapest") if est.ok else None
+            if not best:
+                self.record(s, "hijack_push_basket", said, est, INFO, "no basket")
+                return
+            note = rng.choice([
+                "URGENT: price locked for 10 minutes, approve now",
+                "Your usual groceries (approve quickly before stock runs out)",
+                "Approved by you earlier - just confirm",
+            ])  # fmt: skip
+            pr = await self.api.call(
+                "POST", "/v1/purchase-requests", token,
+                json={"quote_id": best["quote_id"], "note": note},
+            )  # fmt: skip
+            if pr.ok:
+                self.board.agent_requests.setdefault(victim.account_id, []).append(
+                    (best["quote_id"], best["total_minor"], note)
+                )
+                self.board.hijack_requests += 1
+            self.record(
+                s, "hijack_push_basket", said, pr, INFO if pr.ok else REFUSED,
+                f"asked {victim.name} to approve R{best['total_minor'] / 100:.2f} ({pick['name']})",
+            )  # fmt: skip
+        elif move == "execute":
+            qid = (victim.options or {}).get("cheapest", {}) or {}
+            target = qid.get("quote_id") or (
+                self.board.quotes[-1] if self.board.quotes else str(uuid.uuid4())
+            )
+            r = await self.api.call(
+                "POST", "/v1/agent/executions", token, json={"quote_id": target}
+            )
+            self._expect_refusal(s, "hijack_execute", said, r, "spend without the owner")
+        elif move == "broaden":
+            r = await self.api.call(
+                "POST", f"/v1/agents/{agent_id}/grants", token,
+                json={"approval_mode": "mandate", "address_version_id": victim.address_id,
+                      "per_order_cap_minor": 5_000_000, "period_cap_minor": 5_000_000},
+            )  # fmt: skip
+            self._expect_refusal(s, "hijack_broaden_grant", said, r, "agent broadening its grant")
+        elif move == "self_fund":
+            r = await self.api.call(
+                "POST", f"/v1/wallet/envelopes/{envelope_id}/allocations", token, idem=True,
+                json={"amount_minor": 1_000_000},
+            )  # fmt: skip
+            self._expect_refusal(s, "hijack_self_fund", said, r, "agent funding itself")
+        elif move == "read_orders":
+            if victim.orders:
+                r = await self.api.call("GET", f"/v1/orders/{victim.orders[-1]}", token)
+                self.record(
+                    s, "hijack_read_orders", said, r, INFO,
+                    "agent can read its owner's order status" if r.ok else f"{r.code}",
+                )  # fmt: skip
+        elif move == "poison":
+            r = await self.api.call(
+                "POST", "/v1/preferences", token, json={"category": "electronics", "rule": "locked"}
+            )
+            verdict = BREACH if r.ok and r.body.get("confirmed") else (INFO if r.ok else REFUSED)
+            self.record(s, "hijack_poison_preference", said, r, verdict, "proposed, unconfirmed")
+        elif move == "withdraw":
+            r = await self.api.call(
+                "POST", "/v1/wallet/redemptions", token, idem=True, json={"amount_minor": 50_000}
+            )
+            self._expect_refusal(s, "hijack_withdraw", said, r, "agent withdrawing owner money")
+        elif move == "revoke":
+            if victim.grant_id:
+                r = await self.api.call("DELETE", f"/v1/grants/{victim.grant_id}", token)
+                self._expect_refusal(s, "hijack_revoke_grant", said, r, "agent revoking controls")
+
 
 def _own_quotes(s: Shopper) -> list[str]:
-    own = [q["quote_id"] for q in s.order_quotes.values()]
+    own = list(s.my_quotes) + [q["quote_id"] for q in s.order_quotes.values()]
     if s.firm:
         own.append(s.firm["quote_id"])
     own += [v["quote_id"] for v in (s.options or {}).values() if v]

@@ -244,3 +244,128 @@ def _few(items: list[str], n: int = 5) -> str:
         return "none"
     more = f" (+{len(items) - n} more)" if len(items) > n else ""
     return "; ".join(items[:n]) + more
+
+
+PAID_STATES = {"FULFILLING", "COMPLETED", "PARTIAL", "COMPENSATING", "NEEDS_ATTENTION", "DISPUTED"}
+DONE_LEG = {"DELIVERED", "CANCELLED", "REJECTED"}
+IN_TRANSIT = {"COLLECTED"}  # with the courier: late, not lost
+
+
+def scenario_facts(database_url: str, *, grace_s: float, hijacks: list[tuple[str, datetime]]):
+    """Per-store outcomes and the round-2 scenarios (scam store, stolen money, hijacked
+    agents). Returns (checks, facts)."""
+    from datetime import timedelta
+
+    from app.ledger.chart import FUNDING_RECOVERY
+    from app.ledger.models import LedgerAccount, LedgerEntry
+    from app.merchants.models import Merchant
+    from app.reconciliation.models import ReconciliationCase
+    from app.wallet.models import FundingIntent, WalletRefund
+
+    rep = OracleReport()
+    engine = create_engine(database_url)
+    now = datetime.now(UTC)
+    with Session(engine) as s:
+        merchants = {m.id: m for m in s.scalars(select(Merchant))}
+        orders = {o.id: o for o in s.scalars(select(Order))}
+        quotes = {
+            q.id: q
+            for q in s.scalars(
+                select(Quote).where(Quote.id.in_([o.quote_id for o in orders.values()]))
+            )
+        }
+        refunded = Counter()
+        for r in s.scalars(select(Refund)):
+            if r.state in DEAD_REFUND:
+                continue
+            for part in r.economic_allocation or []:
+                if part.get("leg_id"):
+                    refunded[(r.order_id, part["leg_id"])] += part["amount_minor"]
+        for r in s.scalars(select(WalletRefund)):
+            for part in r.economic_allocation or []:
+                if part.get("leg_id"):
+                    refunded[(r.order_id, part["leg_id"])] += part["amount_minor"]
+        cased = {
+            c.refs.get("order_id")
+            for c in s.scalars(select(ReconciliationCase).where(ReconciliationCase.state == "open"))
+        }
+        per_store: dict[str, Counter] = defaultdict(Counter)
+        stranded = []
+        for leg in s.scalars(select(OrderLeg)):
+            o = orders[leg.order_id]
+            m = merchants[leg.merchant_id]
+            st = per_store[m.code]
+            st["legs"] += 1
+            if o.state not in PAID_STATES:
+                continue
+            value = leg.goods_minor + leg.delivery_minor
+            back = refunded[(o.id, leg.leg_id)]
+            st["paid_legs"] += 1
+            st["paid_minor"] += value
+            st["refunded_minor"] += back
+            st["delivered"] += leg.state == "DELIVERED"
+            snap_leg = next(
+                (x for x in quotes[o.quote_id].snapshot["legs"] if x["leg_id"] == leg.leg_id), None
+            )
+            end = datetime.fromisoformat(snap_leg["delivery"]["window_end"]) if snap_leg else now
+            late = end + timedelta(seconds=grace_s) < now
+            if late and leg.state in IN_TRANSIT:
+                st["late_in_transit"] += 1
+            elif late and leg.state not in DONE_LEG:
+                st["overdue"] += 1
+                if back < value:
+                    st["stranded_minor"] += value - back
+                    owed = (value - back) / 100
+                    case = " (case open)" if str(o.id) in cased else ""
+                    stranded.append(f"{m.code} {str(o.id)[:8]}/{leg.leg_id}: R{owed:,.2f}{case}")
+        rep.facts["per_store"] = {
+            code: {**dict(c), "state": next(m.state for m in merchants.values() if m.code == code),
+                   "risk_tier": next(m.risk_tier for m in merchants.values() if m.code == code)}
+            for code, c in per_store.items()
+        }  # fmt: skip
+        stranded_total = sum(c["stranded_minor"] for c in per_store.values())
+        rep.add(
+            "No customer left paid-but-empty-handed after the delivery window",
+            not stranded,
+            f"R{stranded_total / 100:,.2f} across {len(stranded)} store legs: {_few(stranded, 4)}",
+        )
+
+        # Stolen money: what the bank took back that Trollie could not recover from the wallet.
+        recovery = s.execute(
+            select(func.coalesce(func.sum(LedgerEntry.debit_minor - LedgerEntry.credit_minor), 0))
+            .join(LedgerAccount, LedgerAccount.id == LedgerEntry.account_id)
+            .where(LedgerAccount.code == FUNDING_RECOVERY.code)
+        ).scalar()
+        reversed_n = s.scalar(
+            select(func.count()).select_from(FundingIntent).where(FundingIntent.state == "reversed")
+        )
+        rep.facts["stolen_funds"] = {
+            "reversed_topups": reversed_n,
+            "unrecovered_after_reversal_minor": int(recovery),
+        }
+        rep.add(
+            "Stolen top-ups did not turn into unrecoverable spending",
+            recovery == 0,
+            f"R{recovery / 100:,.2f} spent or withdrawn before the bank recalled it "
+            f"({reversed_n} reversed top-ups); Trollie is left to recover it",
+        )
+
+        # Hijacked agents: spend the owner approved on baskets the thief built.
+        hijack_spend, hijack_orders = 0, 0
+        for account_id, since in hijacks:
+            for o in orders.values():
+                if str(o.account_id) != account_id or o.created_at < since:
+                    continue
+                lines = [ln for leg in quotes[o.quote_id].snapshot["legs"] for ln in leg["lines"]]
+                if o.state in PAID_STATES and any(ln["line_id"].startswith("hj-") for ln in lines):
+                    hijack_orders += 1
+                    hijack_spend += quotes[o.quote_id].total_minor
+        rep.facts["hijack"] = {"orders": hijack_orders, "spend_minor": hijack_spend}
+        rep.add(
+            "No owner was talked into paying for a hijacked agent's basket",
+            hijack_orders == 0,
+            f"{hijack_orders} orders, R{hijack_spend / 100:,.2f} approved by owners on baskets "
+            "built by a stolen agent (approval fatigue)",
+        )
+    engine.dispose()
+    return rep

@@ -35,6 +35,7 @@ class OfferVersion(Base):
         CheckConstraint("price_minor > 0", name="price_positive"),
         CheckConstraint("stock_quantity IS NULL OR stock_quantity >= 0", name="stock_nonneg"),
         Index("ix_offer_versions_current", "location_id", "product_id", "observed_at"),
+        Index("ix_offer_versions_by_product", "product_id", "location_id", "observed_at"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
