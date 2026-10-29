@@ -232,6 +232,15 @@ def test_w04_concurrent_allocation_never_exceeds_owner_funds(rt, db, sessions):
 
 def test_w16_wallet_purchase_has_no_external_debit(rt, db, split_world):
     customer, wallet = funded(rt, db, amount=100_000)
+
+    def payables():
+        with tx(db):
+            return {
+                m: balance(db, account(db, chart.MERCHANT_PAYABLE, split_world[f"merchant:{m}"]))
+                for m in ("a", "b")
+            }
+
+    before = payables()
     quote, order_id = owner_buys(rt, db, split_world, customer, "wallet:unallocated")
     assert state(db, order_id) == "FULFILLING"
     assert (
@@ -245,13 +254,11 @@ def test_w16_wallet_purchase_has_no_external_debit(rt, db, split_world):
     assert db.scalar(select(func.count()).where(SimPayment.reference == f"order-{order_id}")) == 0
     b = bal(db, wallet)
     assert b["unallocated_minor"] == 100_000 - quote.total_minor and b["reserved_minor"] == 0
-    for leg in quote.snapshot["legs"]:
-        assert (
-            balance(
-                db, account(db, chart.MERCHANT_PAYABLE, uuid.UUID(leg["seller"]["merchant_id"]))
-            )
-            >= leg["goods_minor"]
-        )
+    after = payables()
+    owed = {split_world["merchant:a"]: "a", split_world["merchant:b"]: "b"}
+    for leg in quote.snapshot["legs"]:  # this purchase made each seller owed its goods
+        m = owed[uuid.UUID(leg["seller"]["merchant_id"])]
+        assert after[m] - before[m] >= leg["goods_minor"]
 
 
 def test_w06_funds_without_authority_is_refused(rt, db, split_world):

@@ -10,7 +10,7 @@ Rules:
 
 import secrets
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -37,11 +37,16 @@ COLLECTION_ACCOUNT = "trollie-sim-collection"  # where simulated top-ups must ar
 # --- Accounts and locking ------------------------------------------------------------
 
 
-def lock_wallet(s: Session, wallet_id: uuid.UUID) -> Wallet:
+def lock_wallet(s: Session, wallet_id: uuid.UUID, *, system: bool = False) -> Wallet:
+    """Lock the wallet row. Owner actions need an active wallet; system steps (funding
+    events, reversals, releasing or committing holds, refunds) must still run on a
+    restricted wallet, or a restriction would strand money mid-flight."""
     wallet = s.get(Wallet, wallet_id, with_for_update=True, populate_existing=True)
     if wallet is None:
         raise TrollieError(ErrorCode.NOT_FOUND, "wallet not found")
-    if wallet.status != "active":
+    if wallet.status != "active" and not system:
+        if wallet.status == "restricted":
+            _require_active(wallet)
         raise TrollieError(ErrorCode.AUTHORITY_DENIED, "wallet is not active", status=wallet.status)
     return wallet
 
@@ -182,7 +187,7 @@ def apply_funding_event(s: Session, *, event_type: str, data: dict[str, Any], ev
             difference_minor=amount,
         )
         return "suspense"
-    lock_wallet(s, wallet.id)
+    lock_wallet(s, wallet.id, system=True)
     post(
         s,
         posting_key=f"topup:{transfer_ref}",
@@ -200,7 +205,7 @@ def reverse_funding(s: Session, *, intent: FundingIntent | None, data: dict[str,
     and no other customer's money is touched."""
     if intent is None or intent.state != "confirmed":
         return "ignored"
-    wallet = lock_wallet(s, intent.wallet_id)
+    wallet = lock_wallet(s, intent.wallet_id, system=True)
     amount = intent.amount_minor
     free = balance(s, unallocated_acct(s, wallet.id))
     frozen = account(s, chart.FROZEN_FUNDS, wallet.id)
@@ -237,6 +242,20 @@ def reverse_funding(s: Session, *, intent: FundingIntent | None, data: dict[str,
             difference_minor=shortfall,
         )
     intent.state = "reversed"
+    # A recalled payment usually means the money was not the payer's to send: restrict the
+    # wallet until a person has reviewed it (I-047).
+    if wallet.status == "active":
+        wallet.status = "restricted"
+        from app.controls.models import Incident
+
+        s.add(
+            Incident(
+                kind="wallet_restricted",
+                severity="high",
+                details={"wallet_id": str(wallet.id), "transfer_ref": intent.transfer_ref,
+                         "shortfall_minor": str(shortfall)},
+            )
+        )  # fmt: skip
     return "reversed"
 
 
@@ -335,6 +354,50 @@ def validate_funding_source(
         raise TrollieError(ErrorCode.INSUFFICIENT_FUNDS, "not enough available funds")
 
 
+def clearing_minor(s: Session, wallet_id: uuid.UUID, now: datetime) -> int:
+    """Top-ups confirmed less than the clearing period ago (I-047). A bank can still recall
+    money for a while after confirming it; until then it is not treated as settled."""
+    from app.config import get_settings
+    from app.ledger.models import LedgerTransaction
+
+    minutes = get_settings().wallet_clearing_minutes
+    rows = s.execute(
+        select(FundingIntent.amount_minor)
+        .join(
+            LedgerTransaction,
+            LedgerTransaction.posting_key == "topup:" + FundingIntent.transfer_ref,
+        )
+        .where(
+            FundingIntent.wallet_id == wallet_id,
+            FundingIntent.state == "confirmed",
+            LedgerTransaction.posted_at > now - timedelta(minutes=minutes),
+        )
+    ).all()
+    return sum(r[0] for r in rows)
+
+
+def _require_active(wallet: Wallet) -> None:
+    if wallet.status != "active":
+        raise TrollieError(
+            ErrorCode.FUNDS_ON_HOLD,
+            "this wallet is restricted while a recalled payment is reviewed",
+            status=wallet.status,
+        )
+
+
+def spendable_now(s: Session, wallet_id: uuid.UUID, now: datetime) -> tuple[int, int]:
+    """(money that may be spent now across the wallet, amount held back while clearing)."""
+    from app.config import get_settings
+
+    spendable = balance(s, unallocated_acct(s, wallet_id)) + sum(
+        balance(s, envelope_acct(s, e.id))
+        for e in s.scalars(select(Envelope).where(Envelope.wallet_id == wallet_id))
+    )
+    allowance = get_settings().wallet_clearing_allowance_minor
+    held = max(0, clearing_minor(s, wallet_id, now) - allowance)
+    return spendable - held, held
+
+
 def reserve(
     s: Session,
     *,
@@ -342,15 +405,25 @@ def reserve(
     order_id: uuid.UUID,
     funding_source: str,
     amount_minor: int,
+    now: datetime | None = None,
 ) -> WalletReservation:
     """Atomically hold funds for one purchase under the wallet lock (W05, W07)."""
     wallet = lock_wallet(s, wallet_for(s, account_id).id)
+    _require_active(wallet)
     acct, envelope_id = source_account(s, wallet.id, funding_source)
     if balance(s, acct) < amount_minor:
         raise TrollieError(
             ErrorCode.INSUFFICIENT_FUNDS,
             "not enough available funds",
             funding_source=funding_source,
+        )
+    available, held = spendable_now(s, wallet.id, now or datetime.now(UTC))
+    if available < amount_minor:
+        raise TrollieError(
+            ErrorCode.FUNDS_ON_HOLD,
+            "part of your recent top-up is still clearing",
+            spendable_now_minor=max(0, available),
+            clearing_minor=held,
         )
     res = WalletReservation(
         wallet_id=wallet.id, envelope_id=envelope_id, order_id=order_id, amount_minor=amount_minor
@@ -379,7 +452,7 @@ def release(s: Session, *, order_id: uuid.UUID) -> bool:
     ).one_or_none()
     if res is None:
         return False
-    lock_wallet(s, res.wallet_id)
+    lock_wallet(s, res.wallet_id, system=True)
     s.refresh(res, with_for_update=True)
     if res.state != "held":
         return False
@@ -400,7 +473,7 @@ def release(s: Session, *, order_id: uuid.UUID) -> bool:
 def commit(s: Session, *, order_id: uuid.UUID, parties: list[dict]) -> int:
     """Turn held funds into obligations to the named recipients; release any remainder."""
     res = s.scalars(select(WalletReservation).where(WalletReservation.order_id == order_id)).one()
-    lock_wallet(s, res.wallet_id)
+    lock_wallet(s, res.wallet_id, system=True)
     s.refresh(res, with_for_update=True)
     if res.state == "committed":
         return res.amount_minor
@@ -446,7 +519,7 @@ def refund_to_wallet(
             )
         return existing
     res = s.scalars(select(WalletReservation).where(WalletReservation.order_id == order_id)).one()
-    lock_wallet(s, res.wallet_id)
+    lock_wallet(s, res.wallet_id, system=True)
     if res.state != "committed":
         raise TrollieError(ErrorCode.INVALID_STATE_TRANSITION, "nothing was committed")
     already = s.scalar(
@@ -506,8 +579,16 @@ def request_redemption(
     ).one_or_none()
     if existing is not None:
         return existing
+    _require_active(wallet)
     if balance(s, unallocated_acct(s, wallet.id)) < amount_minor:
         raise TrollieError(ErrorCode.INSUFFICIENT_FUNDS, "not enough unallocated funds")
+    clearing = clearing_minor(s, wallet.id, now)
+    if balance(s, unallocated_acct(s, wallet.id)) - clearing < amount_minor:
+        raise TrollieError(
+            ErrorCode.FUNDS_ON_HOLD,
+            "recent top-ups cannot be withdrawn until they clear",
+            clearing_minor=clearing,
+        )
     redemption = Redemption(
         wallet_id=wallet.id, business_key=business_key, amount_minor=amount_minor, state="approved"
     )

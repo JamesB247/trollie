@@ -30,7 +30,14 @@ def db(c: AppContext = Depends(ctx)) -> Iterator[Session]:
 
 
 def principal(request: Request, c: AppContext = Depends(ctx)) -> Principal:
-    return verify(c.session_secret, token_from(request))
+    p = verify(c.session_secret, token_from(request))
+    request.state.principal = p
+    if p.kind == "agent":
+        from app.wallet.agent_guard import ensure_active
+
+        with c.rt.sessions() as s:
+            ensure_active(s, p.agent_id)
+    return p
 
 
 def customer(p: Principal = Depends(principal)) -> Principal:

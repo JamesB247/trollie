@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import CheckConstraint, ForeignKey, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -58,6 +58,8 @@ class OrderLeg(Base):
     goods_minor: Mapped[int]
     delivery_minor: Mapped[int]
     line_ids: Mapped[list[str]] = mapped_column(JSONB)
+    # End of the approved delivery window, copied from the snapshot for overdue checks.
+    window_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     state: Mapped[str] = mapped_column(Text, default="RESERVED")
     evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     version: Mapped[int] = mapped_column(default=1)

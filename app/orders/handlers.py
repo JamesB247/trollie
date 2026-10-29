@@ -178,6 +178,13 @@ def sweep(rt: Runtime) -> int:
         with rt.sessions() as s:
             if s.get(Order, order_id).version != version:
                 changed += 1
+    # Legs a merchant never handed over: flag, evaluate the merchant, refund if suspended.
+    from app.merchants.risk import review_deliveries
+
+    try:
+        changed += review_deliveries(rt)
+    except Exception:  # noqa: BLE001
+        log.exception("sweep: delivery review failed")
     # A courier booking whose response was lost is looked up (booking is idempotent by
     # reference) until it is known (blueprint §9.5 "Courier booking response lost"; T40).
     from app.orders.models import DeliveryJob

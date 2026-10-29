@@ -180,6 +180,8 @@ def test_agent_can_propose_but_never_approve_or_pay(api, catalogue, owner_and_ag
     assert r.status_code == 201 and r.json()["source"] == "agent"
     est = api.post(f"/v1/shopping-sessions/{sid}/quotes", headers=agent, json={}).json()
     estimate_id = est["options"]["cheapest"]["quote_id"]
+    pr = api.post("/v1/purchase-requests", headers=agent, json={"quote_id": estimate_id})
+    assert pr.status_code == 202 and pr.json()["status"] == "awaiting_owner_approval"
     for method, url, body in [
         (
             "POST",
@@ -196,8 +198,9 @@ def test_agent_can_propose_but_never_approve_or_pay(api, catalogue, owner_and_ag
     ]:
         resp = api.request(method, url, headers={**agent, "Idempotency-Key": "k"}, json=body)
         assert resp.status_code == 403, (url, resp.text)
-    pr = api.post("/v1/purchase-requests", headers=agent, json={"quote_id": estimate_id})
-    assert pr.status_code == 202 and pr.json()["status"] == "awaiting_owner_approval"
+    # An agent that keeps trying owner-only actions is treated as compromised (I-046).
+    again = api.post("/v1/purchase-requests", headers=agent, json={"quote_id": estimate_id})
+    assert again.status_code == 403 and "suspended" in again.json()["message"]
 
 
 def test_t47_agent_cannot_inject_status_price_or_payee(api, catalogue, owner_and_agent):

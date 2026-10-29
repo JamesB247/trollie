@@ -25,9 +25,17 @@ def build_problem(
     deadline: datetime | None = None,
     budget_minor: int | None = None,
     allow_omit_optional: bool = False,
+    unavailable_locations: frozenset[uuid.UUID] = frozenset(),
 ) -> Problem:
+    from app.merchants.risk import over_exposure_cap
+
     product_ids = {c.product_id for ln in lines for c in ln.candidates}
-    offers = orderable_offers(session, product_ids=product_ids, zone=zone, now=now)
+    capped = over_exposure_cap(session)  # I-044: new merchants holding too much undelivered
+    offers = [
+        o
+        for o in orderable_offers(session, product_ids=product_ids, zone=zone, now=now)
+        if o.merchant_id not in capped and o.location_id not in unavailable_locations
+    ]
     location_ids = {o.location_id for o in offers}
     locations = {
         loc.id: Location(

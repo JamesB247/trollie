@@ -14,7 +14,7 @@ supplied within the approved conditions.
 """
 
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select, text
@@ -191,6 +191,9 @@ def create_order(
                 raise TrollieError(ErrorCode.QUOTE_EXPIRED, "quote expired; approve a new quote")
             require_not_paused(s, "payments")
             snapshot = quote.snapshot
+            from app.quotes.service import _require_trading
+
+            _require_trading(s, snapshot)
             wallet_funded = snapshot["funding_source"].startswith("wallet:")
             profile = (
                 PROFILES["simwallet"]
@@ -230,6 +233,7 @@ def create_order(
                         goods_minor=leg["goods_minor"],
                         delivery_minor=leg["delivery"]["fee_minor"],
                         line_ids=[ln["line_id"] for ln in leg["lines"]],
+                        window_end=datetime.fromisoformat(leg["delivery"]["window_end"]),
                     )
                 )
             if wallet_funded:
@@ -242,6 +246,7 @@ def create_order(
                     order_id=order.id,
                     funding_source=snapshot["funding_source"],
                     amount_minor=quote.maximum_payable_minor,
+                    now=rt.clock.now(),
                 )
             else:
                 action = Action.AUTHORISE if profile.collection == "auth_capture" else Action.CHARGE
@@ -984,26 +989,10 @@ def create_refund(
 ALLOCATION_KEYS = ("party_type", "party_id", "amount_minor", "leg_id", "line_id")
 
 
-def check_claim_caps(s: Session, order: Order, parties: list[dict]) -> None:
-    """Refunds attributed to a store leg never exceed that leg's value, and refunds for one
-    line never exceed that line's total, across every claim and both funding routes.
-
-    Found by the crowd simulation: each missing-item claim was checked only against the
-    order total, so the same missing line could be refunded twice and one store's leg could
-    be refunded beyond its value. The caller must hold a lock that serialises refunds for
-    this order (the order row, or the wallet).
-    """
+def _prior_refunds(s: Session, order: Order) -> tuple[dict[str, int], dict[tuple[str, str], int]]:
+    """Refunds already attributed to each leg, and to each (leg, line), on both routes."""
     from app.wallet.models import WalletRefund
 
-    legs = {
-        leg.leg_id: leg for leg in s.scalars(select(OrderLeg).where(OrderLeg.order_id == order.id))
-    }
-    snapshot = s.get(Quote, order.quote_id).snapshot
-    line_totals = {
-        (leg["leg_id"], ln["line_id"]): ln["line_total_minor"]
-        for leg in snapshot["legs"]
-        for ln in leg["lines"]
-    }
     prior_leg: dict[str, int] = {}
     prior_line: dict[tuple[str, str], int] = {}
     allocations = [
@@ -1025,6 +1014,33 @@ def check_claim_caps(s: Session, order: Order, parties: list[dict]) -> None:
                 if part.get("line_id"):
                     key = (part["leg_id"], part["line_id"])
                     prior_line[key] = prior_line.get(key, 0) + part["amount_minor"]
+    return prior_leg, prior_line
+
+
+def remaining_leg_value(s: Session, order: Order, leg: OrderLeg) -> int:
+    prior_leg, _ = _prior_refunds(s, order)
+    return leg.goods_minor + leg.delivery_minor - prior_leg.get(leg.leg_id, 0)
+
+
+def check_claim_caps(s: Session, order: Order, parties: list[dict]) -> None:
+    """Refunds attributed to a store leg never exceed that leg's value, and refunds for one
+    line never exceed that line's total, across every claim and both funding routes.
+
+    Found by the crowd simulation: each missing-item claim was checked only against the
+    order total, so the same missing line could be refunded twice and one store's leg could
+    be refunded beyond its value. The caller must hold a lock that serialises refunds for
+    this order (the order row, or the wallet).
+    """
+    legs = {
+        leg.leg_id: leg for leg in s.scalars(select(OrderLeg).where(OrderLeg.order_id == order.id))
+    }
+    snapshot = s.get(Quote, order.quote_id).snapshot
+    line_totals = {
+        (leg["leg_id"], ln["line_id"]): ln["line_total_minor"]
+        for leg in snapshot["legs"]
+        for ln in leg["lines"]
+    }
+    prior_leg, prior_line = _prior_refunds(s, order)
     for part in parties:
         leg_id = part.get("leg_id")
         if not leg_id:

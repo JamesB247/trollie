@@ -340,6 +340,7 @@ def request_estimates(
     account_id: uuid.UUID,
     clock: Clock,
     allow_omit_optional: bool = False,
+    unavailable_locations: frozenset[uuid.UUID] = frozenset(),
 ) -> EstimateResult:
     shopping = owned_session(session, session_id, account_id)
     items = list(
@@ -363,6 +364,7 @@ def request_estimates(
         deadline=shopping.deadline,
         budget_minor=shopping.budget_minor,
         allow_omit_optional=allow_omit_optional,
+        unavailable_locations=unavailable_locations,
     )
     result = optimise(problem)
     must_have = {i.line_id for i in items if i.must_have}
@@ -508,6 +510,20 @@ def release_reservations(
             res.version += 1
 
 
+def _require_trading(s: Session, snapshot: dict) -> None:
+    """A merchant suspended since the estimate gets no reservation and no order (I-044)."""
+    from app.merchants.models import Merchant, MerchantState
+
+    for leg in snapshot["legs"]:
+        m = s.get(Merchant, uuid.UUID(leg["seller"]["merchant_id"]))
+        if m is None or m.state != MerchantState.PAYMENT_ENABLED:
+            raise TrollieError(
+                ErrorCode.REAPPROVAL_REQUIRED,
+                "a store in this basket is no longer available; request new options",
+                store=leg["seller"]["display_name"],
+            )
+
+
 def prepare_firm_quote(
     sessions: sessionmaker[Session],
     *,
@@ -533,6 +549,7 @@ def prepare_firm_quote(
                 raise TrollieError(ErrorCode.CAPABILITY_NOT_ENABLED, "unsupported funding source")
             FUNDING_VALIDATORS[kind](s, account_id, funding_source, estimate.total_minor)
         snapshot = copy.deepcopy(estimate.snapshot)
+        _require_trading(s, snapshot)
         plans = []
         for leg in snapshot["legs"]:
             lines = _reservation_lines(leg)

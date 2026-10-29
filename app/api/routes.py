@@ -182,6 +182,7 @@ def estimates(
             account_id=p.account_id,
             clock=c.rt.clock,
             allow_omit_optional=body.allow_omit_optional,
+            unavailable_locations=getattr(c.rt.merchant, "unavailable", frozenset)(),
         )
         return {
             "options": {k: (_quote_view(v) if v else None) for k, v in result.quotes.items()},
@@ -223,10 +224,17 @@ def get_quote(quote_id: uuid.UUID, s: Session = Depends(db), p: Principal = Depe
 
 @router.post("/purchase-requests", status_code=202)
 def purchase_request(
-    body: PurchaseRequestIn, s: Session = Depends(db), p: Principal = Depends(principal)
+    body: PurchaseRequestIn,
+    s: Session = Depends(db),
+    p: Principal = Depends(principal),
+    c: AppContext = Depends(ctx),
 ):
     """Bring a quote to the owner's attention. Creates no authority of any kind."""
     with s.begin():
+        if p.kind == "agent":
+            from app.wallet.agent_guard import check_request_rate
+
+            check_request_rate(s, p.agent_id, c.rt.clock.now())
         quote = owned_quote(s, body.quote_id, p.account_id)
         outbox.emit(
             s,
@@ -409,13 +417,25 @@ def issue(
     leg = next((lg for lg in snap["legs"] if lg["leg_id"] == body.leg_id), None)
     if leg is None:
         raise TrollieError(ErrorCode.VALIDATION_FAILED, "unknown leg")
+    amount = body.amount_minor
+    if body.reason == "not_delivered":
+        from app.orders.models import OrderLeg
+        from app.orders.service import remaining_leg_value
+
+        _check_not_delivered(s, order, body.leg_id, c.rt.clock.now())
+        row = s.scalars(
+            select(OrderLeg).where(OrderLeg.order_id == order.id, OrderLeg.leg_id == body.leg_id)
+        ).one()
+        amount = remaining_leg_value(s, order, row)
+        if amount <= 0:
+            raise TrollieError(ErrorCode.INVALID_STATE_TRANSITION, "already fully refunded")
     parties = [
         {
             "party_type": "merchant",
             "party_id": leg["merchant_id"],
-            "amount_minor": body.amount_minor,
+            "amount_minor": amount,
             "leg_id": body.leg_id,
-            "line_id": body.line_id,
+            **({"line_id": body.line_id} if body.line_id else {}),
         }
     ]
     key = f"issue:{order_id}:{idempotency_key}"
@@ -428,7 +448,49 @@ def issue(
         refund_id = create_refund(
             c.rt, order_id=order_id, business_key=key, parties=parties, reason=body.reason
         )
+    if body.reason == "not_delivered":
+        from app.controls.models import Incident
+        from app.merchants.risk import evaluate
+
+        with c.rt.sessions() as s2, s2.begin():
+            s2.add(
+                Incident(
+                    kind="non_delivery_claim",
+                    severity="medium",
+                    details={"merchant_id": leg["merchant_id"], "order_id": str(order_id),
+                             "leg_id": body.leg_id},
+                )
+            )  # fmt: skip
+            s2.flush()
+            evaluate(s2, uuid.UUID(leg["merchant_id"]), c.rt.clock.now())
     return {"refund_id": str(refund_id), "status": "refund_requested"}
+
+
+def _check_not_delivered(s: Session, order: Order, leg_id: str, now) -> None:
+    """A non-delivery claim is accepted only once the window (plus grace) has passed and
+    the merchant never handed the goods to the courier. Goods with the courier are late,
+    not lost: the customer is told so instead of being refunded for goods still coming."""
+    from app.merchants.risk import NOT_HANDED_OVER, collected, grace
+    from app.orders.models import OrderLeg
+
+    leg = s.scalars(
+        select(OrderLeg).where(OrderLeg.order_id == order.id, OrderLeg.leg_id == leg_id)
+    ).one()
+    if leg.state == "DELIVERED":
+        raise TrollieError(ErrorCode.INVALID_STATE_TRANSITION, "the courier recorded delivery")
+    if collected(s, leg) or leg.state == "COLLECTED":
+        raise TrollieError(
+            ErrorCode.INVALID_STATE_TRANSITION,
+            "your order is with the courier and on its way; we will update you",
+        )
+    if leg.state not in NOT_HANDED_OVER or leg.window_end is None:
+        raise TrollieError(ErrorCode.INVALID_STATE_TRANSITION, f"leg is {leg.state}")
+    if leg.window_end + grace() > now:
+        raise TrollieError(
+            ErrorCode.INVALID_STATE_TRANSITION,
+            "the delivery window has not passed yet",
+            claim_from=(leg.window_end + grace()).isoformat(),
+        )
 
 
 # --- Preferences ---------------------------------------------------------------------

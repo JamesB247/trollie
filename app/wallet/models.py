@@ -35,6 +35,10 @@ class Agent(Base):
     id: Mapped[uuid.UUID] = uuid_pk()
     account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customer_accounts.id"), index=True)
     name: Mapped[str] = mapped_column(Text)
+    # Set when the agent behaves like a stolen or broken agent; every call it makes is then
+    # refused until the owner reviews it (I-046).
+    suspended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    suspended_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = created_at()
 
 

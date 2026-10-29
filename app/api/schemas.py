@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Strict(BaseModel):
@@ -81,11 +81,19 @@ class OrderIn(Strict):
 
 class IssueIn(Strict):
     leg_id: str = Field(max_length=64)
-    # Every claim reason is about an item, so the claim names its quote line; a line can
-    # never be refunded beyond its total (crowd simulation: repeat claims for one item).
-    line_id: str = Field(min_length=1, max_length=64)
-    amount_minor: int = Field(gt=0, le=MAX_MINOR)
-    reason: Literal["missing_item", "damaged", "wrong_item"]
+    # An item claim names its quote line; a line can never be refunded beyond its total
+    # (crowd simulation: repeat claims for one item). `not_delivered` is about a whole leg.
+    line_id: str | None = Field(default=None, min_length=1, max_length=64)
+    # For `not_delivered` the amount is worked out by Trollie (what is left of that store's
+    # part of the order); a customer should not have to calculate it.
+    amount_minor: int | None = Field(default=None, gt=0, le=MAX_MINOR)
+    reason: Literal["missing_item", "damaged", "wrong_item", "not_delivered"]
+
+    @model_validator(mode="after")
+    def _line_for_item_claims(self) -> "IssueIn":
+        if self.reason != "not_delivered" and not (self.line_id and self.amount_minor):
+            raise ValueError("an item claim must name the line it is about and an amount")
+        return self
 
 
 class AmountIn(Strict):

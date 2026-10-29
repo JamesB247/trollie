@@ -8,6 +8,7 @@ from functools import lru_cache
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.accounts.crypto import AddressCipher
 from app.api import dev_routes, pages, routes, wallet_routes
@@ -16,14 +17,15 @@ from app.approvals.service import WebAuthnConfig
 from app.clock import SystemClock
 from app.config import Environment, Settings, check_startup, get_settings
 from app.db import check_deployment_marker, make_engine, make_session_factory
-from app.errors import TrollieError
+from app.errors import ErrorCode, TrollieError
+from app.merchants.health import HealthCheckedMerchant
 from app.orders.handlers import pump
 from app.orders.runtime import Runtime
 from app.redaction import install_log_redaction
 from app.registry import register_all
 from app.secrets_store import load_or_create
 from app.simulators.courier import SimulatedCourier
-from app.simulators.merchant import SimulatedMerchant
+from app.simulators.merchant import LatentMerchant
 from app.simulators.payments import SimulatedPaymentProvider
 
 log = logging.getLogger(__name__)
@@ -40,7 +42,7 @@ def build_runtime(settings: Settings, engine) -> Runtime:
     return Runtime(
         sessions=make_session_factory(engine),
         clock=clock,
-        merchant=SimulatedMerchant(engine, clock),
+        merchant=HealthCheckedMerchant(LatentMerchant(engine, clock)),
         payments=SimulatedPaymentProvider(
             engine, clock, secret=secret, environment=settings.env.value
         ),
@@ -50,6 +52,16 @@ def build_runtime(settings: Settings, engine) -> Runtime:
         mandate_fixture_enabled=settings.mandate_fixture_enabled
         and settings.env is Environment.TEST,
     )
+
+
+def _strike(c, agent_id, request: Request, exc: TrollieError) -> None:
+    """Count a refused attempt by an agent; enough of them suspend it (I-046)."""
+    from app.wallet.agent_guard import record_strike
+
+    with c.rt.sessions() as s, s.begin():
+        record_strike(
+            s, agent_id, f"{request.method} {request.url.path}: {exc.code}", c.rt.clock.now()
+        )
 
 
 def _worker(rt: Runtime, stop: threading.Event) -> None:
@@ -95,6 +107,15 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
 
     @app.exception_handler(TrollieError)
     async def trollie_error(request: Request, exc: TrollieError) -> JSONResponse:
+        p = getattr(request.state, "principal", None)
+        if (
+            p is not None
+            and p.kind == "agent"
+            and exc.code
+            in (ErrorCode.AUTHORITY_DENIED, ErrorCode.APPROVAL_INVALID, ErrorCode.RATE_LIMITED)
+            and "suspended" not in exc.message
+        ):
+            await run_in_threadpool(_strike, request.app.state.ctx, p.agent_id, request, exc)
         return JSONResponse(
             status_code=exc.http_status,
             content={
