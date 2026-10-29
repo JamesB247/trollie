@@ -1,6 +1,6 @@
 # Acceptance status
 
-Generated 2026-10-28 21:31 UTC by `scripts/acceptance_report.py`. Suite: 193/193 tests passed.
+Generated 2026-10-29 04:30 UTC by `scripts/acceptance_report.py`. Suite: 209/209 tests passed.
 
 Statuses follow DECISIONS.md D-S02. `passed_domain` and `passed_simulator` are evidence about this code against fixtures and simulators; they are **not** evidence about any real provider, merchant, courier, device or operation. SIMULATED — NOT REAL MONEY.
 
@@ -47,7 +47,7 @@ Summary: deferred_not_in_scope: 5, passed_browser: 1, passed_domain: 40, passed_
 | T37 | Full basket fails before capture | `passed_simulator` | test_t37_basket_fails_before_capture_voids_and_releases |  |
 | T38 | One leg fails after another commits | `passed_simulator` | test_t38_immediate_one_leg_fails_after_other_committed |  |
 | T39 | Cancellation races capture | `passed_simulator` | test_cancel_during_checkout_waits_for_observed_result, test_t39_cancellation_races_capture |  |
-| T40 | Courier booking times out | `passed_simulator` | test_t40_courier_booking_timeout_looks_up_not_rebooks |  |
+| T40 | Courier booking times out | `passed_simulator` | test_t40_booking_unknown_is_resolved_by_the_sweep, test_t40_courier_booking_timeout_looks_up_not_rebooks |  |
 | T41 | Consolidated pickup, second store late | `deferred_not_in_scope` | — | Consolidation is disabled (D-S03.1); every leg is delivered separately. |
 | T42 | Delivery to unapproved address | `passed_simulator` | test_t42_delivery_to_unapproved_address_rejected |  |
 | T43 | Missing/damaged package | `passed_simulator` | test_t43_damaged_item_issue_becomes_targeted_refund | Targeted refund only; evidence handling and liability are operational. |

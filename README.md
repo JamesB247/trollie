@@ -19,6 +19,8 @@ superseded clauses, implementation choices).
 - `docs/PRD.md` — product requirements v2.2
 - `docs/WALLET_AND_SPRINT_DECISIONS_ADDENDUM.md` — wallet scope addendum, adopted with A1–A6
 - `docs/ACCEPTANCE_STATUS.md` — T01–T60 and W01–W20 with evidence and honest limits
+- `docs/CROWD_SIMULATION.md` — 60 random shoppers (honest, broke, hostile) against a fictional
+  multi-region market: how to run it, what broke, what was fixed
 
 Current sprint: M0 baseline + M2–M3 synthetic commerce + W1–W3 synthetic wallet. M1
 commercial feasibility (signed merchants, provider topology, courier terms) remains open.
