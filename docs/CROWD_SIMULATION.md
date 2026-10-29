@@ -210,6 +210,6 @@ pilot, not an engineering default.
 
 **Still open**: paying a new merchant before delivery is proven (settlement timing is a D02
 provider question); who carries a courier's loss (D05); the hypermarket's slow integration
-still fails most stock holds (32% before, 36% after); the circuit breaker only stops
+still fails most stock holds (32% before, 39% after); the circuit breaker only stops
 offering it while it is failing, so its coverage is lost then too; search at 63 000
 products is literal and roughly 10x slower (p50 92 ms, still fine).
