@@ -75,7 +75,7 @@ Each of these takes years, relationships and data. That's exactly why a Visa, a 
 |---|---|---|
 | Grocery ordering and delivery | Not the company | Retailers own it; their own AI assistants already do it |
 | Food lifestyle app (recipes, photo to recipe) | Nice to have, not a moat | Commodity features; 3–4% of users still active after 30 days |
-| A consumer "dodgy website" browser extension | Not a moat on its own | Guardio ($1.1bn valuation), Norton, McAfee, Bitdefender and Malwarebytes do it, and Chrome and Edge are building it in for free. In SA **88.6% of fraud cases are in banking apps**, and 77% of web traffic is mobile, so a browser extension sees a minority of losses |
+| A consumer "dodgy website" browser extension | Not a moat on its own | Guardio ($1.1bn valuation), Norton, McAfee, Bitdefender and Malwarebytes do it, and Chrome and Edge are building it in for free. In SA **88.6% of fraud cases are in banking apps**, and about 60–63% of SA web traffic is mobile (StatCounter, mid-2026; the 70%+ figure is Africa-wide), so a desktop browser extension sees a minority of losses |
 | A per-user model watching for out-of-character behaviour | **Not a moat** | **Discovery's TRUST Alert and Capitec already do this free**, with the bank's own data, which is better than ours. Per-user cloud sandboxes cost about US$37 a user a month; most SA phones can't run on-device language models |
 | Consumer protection for AI agents only | Contested | Gen Digital (Norton) launched an Agent Trust Hub and AI Agent Protection in 2026; Chrome confirms purchases inside its own agent |
 
